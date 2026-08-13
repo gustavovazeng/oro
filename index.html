@@ -26,9 +26,11 @@ html,body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-seri
 .funil-btn:hover{border-color:var(--border-h)}
 .funil-dot{width:7px;height:7px;border-radius:50%;background:var(--green);flex-shrink:0}
 .funil-dot.off{background:var(--hint)}
+.funil-dot.done{background:var(--accent)}
 .funil-name{font-size:12px;font-weight:600;color:var(--text-strong)}
 .funil-status{font-size:9px;color:var(--green);letter-spacing:.04em}
 .funil-status.off{color:var(--hint)}
+.funil-status.done{color:var(--accent)}
 .funil-caret{font-size:9px;color:var(--hint);margin-left:2px}
 .funil-menu{position:absolute;top:calc(100% + 6px);left:0;min-width:220px;background:#1a2236;border:1px solid var(--border-h);border-radius:10px;box-shadow:0 10px 28px rgba(2,6,20,.5);padding:5px;z-index:30}
 .funil-item{display:flex;align-items:center;gap:8px;width:100%;padding:8px 9px;border-radius:7px;border:none;background:transparent;cursor:pointer;text-align:left;font-family:'DM Sans',sans-serif}
@@ -1712,20 +1714,25 @@ function renderFunilBadge(){
   // Funil estático (ex.: oro_jul26, finalizado) não tem sheetId — não é um
   // problema de configuração, então não deve cair no estado "sem planilha".
   const curOk=cur.static||!!cur.sheetId;
+  // Funil "finalizado" (ex.: oro_jul26) usa azul (--accent) em vez do verde
+  // normal de funil "ativo" — cor diferente pra distinguir lançamento
+  // encerrado de lançamento em andamento, de relance no seletor.
+  const curCls=!curOk?" off":(cur.status==="finalizado"?" done":"");
   wrap.innerHTML=`
     <button class="funil-btn" onclick="toggleFunilDropdown()">
-      <span class="funil-dot${curOk?"":" off"}"></span>
+      <span class="funil-dot${curCls}"></span>
       <span>
         <span class="funil-name">${cur.label}</span><br/>
-        <span class="funil-status${curOk?"":" off"}">${curOk?cur.status:"sem planilha"}</span>
+        <span class="funil-status${curCls}">${curOk?cur.status:"sem planilha"}</span>
       </span>
       <span class="funil-caret">▾</span>
     </button>
     ${S.funilDropdownOpen?`<div class="funil-menu">${Object.values(FUNIS).map(f=>{
       const ok=f.static||!!f.sheetId;
+      const cls=!ok?" off":(f.status==="finalizado"?" done":"");
       return `
       <button class="funil-item${f.key===S.funilAtivo?" active":""}" onclick="switchFunil('${f.key}')">
-        <span class="funil-dot${ok?"":" off"}"></span>
+        <span class="funil-dot${cls}"></span>
         <span>
           <div class="funil-item-name">${f.label}</div>
           <div class="funil-item-status">${ok?f.status:"sem planilha — clique pra ver"}</div>
@@ -4578,7 +4585,12 @@ function render(){
         const binStr=atob(cur.htmlB64);
         const bytes=new Uint8Array(binStr.length);
         for(let i=0;i<binStr.length;i++)bytes[i]=binStr.charCodeAt(i);
-        const decoded=new TextDecoder("utf-8").decode(bytes);
+        let decoded=new TextDecoder("utf-8").decode(bytes);
+        // O oro_jul26 tem seu próprio selo (não-interativo) dentro do header
+        // dele — duplicava o selo seletor deste arquivo. Esconde só o selo
+        // interno via CSS injetado antes do </head>; mantém as abas
+        // (Principal/Captação/Aquecimento/...) do header dele funcionando.
+        decoded=decoded.replace("</head>","<style>.funil-wrap{display:none!important}</style></head>");
         // srcdoc em vez de Blob URL: o oro_jul26 não referencia nenhum
         // recurso relativo (só URLs absolutas), então não precisa de uma
         // base URL própria — e assim evita depender de URL.createObjectURL.
