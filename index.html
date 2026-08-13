@@ -746,11 +746,28 @@ function msToISO(ms){
   const d=new Date(ms);
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")}`;
 }
-// "created_at" das leads vem em UTC (sufixo Z). Ajusta -3h antes de definir o
-// dia, mesma lógica usada no dash de Carrinho p/ "Submitted At" das fichas.
+// "created_at" das leads vem como "DD/MM/YYYY HH:MM:SS" (formato BR, não
+// ISO) — Date.parse(s) não dá pra usar aqui: motores JS tratam string assim
+// como MM/DD/YYYY (ou dão NaN quando o dia é >12, derrubando a lead
+// inteira). Isso fazia TODAS as leads com dia >12 sumirem silenciosamente
+// (e as com dia ≤12 caírem no dia/mês trocado) — foi o que zerou leads e
+// respostas da América do Norte (planilha só tem datas a partir do dia 13).
+// Parse manual, mesma técnica já usada em parseFichaDateTimeMs() pro
+// "Submitted At" das fichas do Carrinho. Ajusta -3h antes de definir o dia.
 function toISOLead(s){
   if(!s)return null;
-  const ms=Date.parse(s);
+  const [datePart,timePart]=String(s).trim().split(" ");
+  if(!datePart)return null;
+  const p=datePart.split("/");
+  if(p.length!==3)return null;
+  const da=parseInt(p[0]),mo=parseInt(p[1]),y=parseInt(p[2].length===4?p[2]:"20"+p[2]);
+  if(!y||!mo||!da)return null;
+  let hh=0,mi=0,ss=0;
+  if(timePart){
+    const t=timePart.split(":").map(n=>parseInt(n)||0);
+    hh=t[0]||0;mi=t[1]||0;ss=t[2]||0;
+  }
+  const ms=Date.UTC(y,mo-1,da,hh,mi,ss);
   if(isNaN(ms))return null;
   return {ms,date:msToISO(ms-3*60*60*1000)};
 }
@@ -925,22 +942,28 @@ function findPrecoKey(headers){
 }
 // Unifica fichas da mesma pessoa (telefone OU e-mail em comum) mantendo só a
 // mais antiga — mesma técnica de Union-Find do modelo original.
-function dedupFichasByContact(fichas){
+// Dedup genérico por contato (telefone OU e-mail, union-find — liga registros
+// transitivamente mesmo quando só um dos dois campos bate) — mantém, de cada
+// grupo, o registro com menor "ms" (a inscrição/ficha mais antiga da pessoa).
+// Espera itens com {phone,email,ms} já normalizados (normalizePhone/
+// normalizeEmail). Usado tanto pras fichas do Carrinho quanto pra Base leads.
+function dedupByContact(items){
   const parent={};
   function find(x){ if(!(x in parent))parent[x]=x; while(parent[x]!==x){parent[x]=parent[parent[x]];x=parent[x];} return x; }
   function union(a,b){ const ra=find(a),rb=find(b); if(ra!==rb)parent[ra]=rb; }
-  fichas.forEach((f,i)=>{
+  items.forEach((it,i)=>{
     const kRow="r:"+i; find(kRow);
-    if(f.phone)union(kRow,"p:"+f.phone);
-    if(f.email)union(kRow,"e:"+f.email);
+    if(it.phone)union(kRow,"p:"+it.phone);
+    if(it.email)union(kRow,"e:"+it.email);
   });
   const groups={};
-  fichas.forEach((f,i)=>{
+  items.forEach((it,i)=>{
     const root=find("r:"+i);
-    if(!groups[root]||f.ms<groups[root].ms)groups[root]=f;
+    if(!groups[root]||it.ms<groups[root].ms)groups[root]=it;
   });
   return Object.values(groups);
 }
+function dedupFichasByContact(fichas){ return dedupByContact(fichas); }
 // Processa as 3 bases já parseadas (linhas cruas) e popula todo o estado
 // S.carrinho* de uma vez. Precisa rodar DEPOIS que S.adIdMap (Base Meta) já
 // foi montado, pra conseguir casar as fichas de tráfego com anúncio/campanha.
@@ -1245,11 +1268,17 @@ async function loadData(){
     }
 
     // ── Leads reais (Base leads) ──
-    const leadsRows=[], leadsByDate={};
+    // Dedup por telefone/e-mail (mesmo critério das fichas do Carrinho):
+    // uma pessoa pode reenviar o formulário mais de uma vez (reabrir a
+    // página, refazer o quiz, etc.) e isso infla a contagem de leads. Monta
+    // TODAS as linhas primeiro (leadsRowsAll) e só depois de-duplica,
+    // mantendo a inscrição mais antiga de cada pessoa — leadsByDate (usado
+    // no "leads/dia" do resumo e do planejado x realizado) é contado já em
+    // cima da lista deduplicada, não da lista crua.
+    const leadsRowsAll=[];
     for(const r of leadsRowsRaw){
       const parsed=toISOLead(r["created_at"]);if(!parsed)continue;
       const {date,ms}=parsed;
-      leadsByDate[date]=(leadsByDate[date]||0)+1;
 
       const utmMed=(r["utm_medium"]||"").trim();
       const utmCont=(r["utm_content"]||r["utm_term"]||"").trim();
@@ -1280,23 +1309,24 @@ async function loadData(){
       const hasUtm=utmSourceRaw.length>0;
       const channel=(!hasUtm||utmSourceRaw.startsWith("FBAds"))?"trafego":"organico";
 
-      leadsRows.push({
+      leadsRowsAll.push({
         date,ms,
         path:(r["path"]||"").trim(), // página onde a lead se cadastrou (bate com "Page Path" da Base GA4)
         quizOk:(r["Quiz respondido?"]||"").trim()==="Sim",
         faixa:(r["faixa"]||"").trim(),
         name:(r["name"]||"").trim(),
-        email:(r["person_email"]||"").trim(),
-        phone:(r["person_phone"]||"").trim(),
+        email:normalizeEmail(r["person_email"]), // já normalizado — usado tb como chave de dedup
+        phone:normalizePhone(r["person_phone"]), // já normalizado — usado tb como chave de dedup
         utmSource:(r["utm_source"]||"").trim()||"(direto/sem utm)",
         platformName,channel,hasUtm,
         temperatureName:campaignTemperature(campName),
-        // TODO: a pergunta virou "conhece o Elton" neste lançamento, mas a
-        // coluna na planilha ainda está com o texto antigo ("Ramon
-        // Galimberti") — ajustar a chave abaixo assim que a pergunta for
-        // atualizada na Base leads (ou confirmar o texto exato da nova
-        // pergunta), senão esse campo volta sempre vazio.
-        conheceElton:(r["Você conhece o Ramon Galimberti?"]||"").trim(),
+        // "Você conhece o Ramon Galimberti?" é uma pergunta antiga/diferente
+        // (confirmado com o usuário) — NÃO é a mesma coisa que "conhece o
+        // Elton", só um texto antigo que sobrou na planilha. Por isso não lê
+        // essa coluna: fica vazio (null-safe em todo o código de
+        // renderização) até a coluna certa de "conhece o Elton" existir na
+        // Base leads — aí é só trocar a chave abaixo pelo nome exato dela.
+        conheceElton:"",
         conheceAD:(r["Você conhece a Aliança Divergente?"]||"").trim(),
         adName,campName,
         idade:(r["Em qual faixa etária você se encaixa?"]||"").trim(),
@@ -1308,6 +1338,9 @@ async function loadData(){
         trabalho:(r["Você trabalha como (marque o trabalho que te gera mais renda):"]||"").trim(),
       });
     }
+    const leadsRows=dedupByContact(leadsRowsAll);
+    const leadsByDate={};
+    for(const l of leadsRows)leadsByDate[l.date]=(leadsByDate[l.date]||0)+1;
 
     S.meta=mD; S.metaRows=metaRows; S.adIdMap=adIdMap;
     S.leadsRows=leadsRows; S.leadsByDate=leadsByDate;
