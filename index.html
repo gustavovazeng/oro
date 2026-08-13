@@ -1494,12 +1494,19 @@ function getDaily(start,end,channel="total",temp="todos"){
     const m=sumMetaRows(metaRowsFiltered(date,date,temp));
     const dayLeadsAll=S.leadsRows.filter(l=>l.date===date);
     const leads=leadsForTemp(leadsForChannel(dayLeadsAll,channel),temp).length;
+    // GAP usa leads TOTAIS (sem dedup) — o gerenciador do Meta (actionLeads)
+    // também não deduplica por contato, então comparar contra a contagem já
+    // deduplicada infla o GAP artificialmente. O gráfico de volume continua
+    // mostrando "leads" (deduplicado) normalmente — só o GAP muda a base.
+    const dayLeadsAllRaw=S.leadsRowsRaw.filter(l=>l.date===date);
+    const leadsTotal=leadsForTemp(leadsForChannel(dayLeadsAllRaw,channel),temp).length;
     const spend=channel==="organico"?0:m.spend;
     const actionLeads=m.actionLeads||0;
     // GAP % = diferença entre o que o gerenciador (Meta) reportou e os leads
-    // reais da planilha, relativa aos leads reais. Positivo = Meta reportou
-    // mais leads do que realmente caíram na planilha (duplicidade/atraso etc).
-    const gapPct=leads>0?((actionLeads-leads)/leads)*100:null;
+    // totais da planilha (sem dedup), relativa aos leads totais. Positivo =
+    // Meta reportou mais leads do que realmente caíram na planilha
+    // (duplicidade/atraso etc).
+    const gapPct=leadsTotal>0?((actionLeads-leadsTotal)/leadsTotal)*100:null;
     return{date,label:fDate(date),spend,leads,actionLeads,gapPct,
       cpl:leads>0?spend/leads:0};
   });
