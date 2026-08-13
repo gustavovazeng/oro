@@ -747,17 +747,34 @@ function msToISO(ms){
   const d=new Date(ms);
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth()+1).padStart(2,"0")}-${String(d.getUTCDate()).padStart(2,"0")}`;
 }
-// "created_at" das leads vem como "DD/MM/YYYY HH:MM:SS" (formato BR, não
-// ISO) — Date.parse(s) não dá pra usar aqui: motores JS tratam string assim
-// como MM/DD/YYYY (ou dão NaN quando o dia é >12, derrubando a lead
-// inteira). Isso fazia TODAS as leads com dia >12 sumirem silenciosamente
-// (e as com dia ≤12 caírem no dia/mês trocado) — foi o que zerou leads e
-// respostas da América do Norte (planilha só tem datas a partir do dia 13).
-// Parse manual, mesma técnica já usada em parseFichaDateTimeMs() pro
-// "Submitted At" das fichas do Carrinho. Ajusta -3h antes de definir o dia.
+// "created_at" das leads já veio em dois formatos diferentes na mesma
+// planilha, dependendo de como ela é exportada/lida:
+//  • ISO-8601 UTC:  "2026-08-13T03:13:09.768Z"   (Date.parse lida bem)
+//  • BR:            "13/08/2026 00:13:09"        (sem T/Z — o valor já é a
+//    hora de Brasília: repare que "03:13:09Z" (UTC) = "00:13:09" BRT pro
+//    MESMO lead — ou seja, esse formato NÃO precisa de ajuste de fuso, só o
+//    ISO precisa, porque o BR já vem convertido)
+// Date.parse(s) sozinho não dá pra usar pro formato BR: motores JS tratam
+// "DD/MM/YYYY" como MM/DD/YYYY (ou dão NaN quando o dia é >12, derrubando a
+// lead inteira). Isso já fez TODAS as leads com dia >12 sumirem
+// silenciosamente numa planilha (e as com dia ≤12 caírem no dia trocado).
+// Por isso: detecta o formato pela presença de "T" (ISO) e trata cada um
+// com a conversão de fuso correta pra ele.
 function toISOLead(s){
   if(!s)return null;
-  const [datePart,timePart]=String(s).trim().split(" ");
+  const str=String(s).trim();
+  let ms;
+  if(/^\d{4}-\d{2}-\d{2}T/.test(str)){
+    // ISO-8601 UTC — Date.parse é confiável aqui (sem ambiguidade de locale).
+    // Precisa do -3h: é UTC de verdade, não hora de Brasília ainda.
+    ms=Date.parse(str);
+    if(isNaN(ms))return null;
+    return {ms,date:msToISO(ms-3*60*60*1000)};
+  }
+  // Formato BR "DD/MM/YYYY HH:MM:SS" — parse manual (mesma técnica de
+  // parseFichaDateTimeMs, pro "Submitted At" das fichas do Carrinho). Já
+  // vem em hora de Brasília, então NÃO aplica -3h de novo aqui.
+  const [datePart,timePart]=str.split(" ");
   if(!datePart)return null;
   const p=datePart.split("/");
   if(p.length!==3)return null;
@@ -768,9 +785,9 @@ function toISOLead(s){
     const t=timePart.split(":").map(n=>parseInt(n)||0);
     hh=t[0]||0;mi=t[1]||0;ss=t[2]||0;
   }
-  const ms=Date.UTC(y,mo-1,da,hh,mi,ss);
+  ms=Date.UTC(y,mo-1,da,hh,mi,ss);
   if(isNaN(ms))return null;
-  return {ms,date:msToISO(ms-3*60*60*1000)};
+  return {ms,date:msToISO(ms)};
 }
 
 // ── Status helpers ────────────────────────────────────────────────────────
