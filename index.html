@@ -548,7 +548,8 @@ const S = {
   meta:{},               // date → {spend,clicks,impressions,actionLeads,videoViews}
   metaRows:[],           // linhas planas da Base Meta: {date,adId,adName,campId,campName,adsetName,spend,clicks,impressions,actionLeads,videoViews,igUrl}
   adIdMap:{},            // adId → {adName,campName,campId,adsetName,igUrl}
-  leadsRows:[],          // leads reais: {date,ms,quizOk,faixa,name,email,phone,utmSource,adName,campName,...demografia}
+  leadsRows:[],          // leads reais, JÁ DEDUPLICADAS por telefone/e-mail (1ª inscrição de cada pessoa): {date,ms,quizOk,faixa,name,email,phone,utmSource,adName,campName,...demografia}
+  leadsRowsRaw:[],       // mesma coisa, SEM dedup — toda submissão do formulário conta, mesmo repetida. Só usado pra mostrar "leads totais" ao lado do número deduplicado (ver kpiCard "Leads captados").
   leadsByDate:{},        // date → count (leads reais/dia)
   ga4Rows:[],            // linhas da Base GA4 (só tráfego FBAds — exclusão da página de pesquisa/quiz pendente, ver processGA4): {date,sessions,pageViews,temperatureName}
   likesRows:[],          // linhas da Contagem likes: {date,time,likes}
@@ -615,7 +616,7 @@ function toggleFunilDropdown(){
 // em que estava ao trocar de funil.
 function resetFunilData(){
   S.meta={}; S.metaRows=[]; S.adIdMap={};
-  S.leadsRows=[]; S.leadsByDate={};
+  S.leadsRows=[]; S.leadsRowsRaw=[]; S.leadsByDate={};
   S.ga4Rows=[]; S.likesRows=[];
   S.aquecimentoRows=[]; S.lembreteRows=[]; S.aulasRows=[];
   S.manualAlcance={aquecimento:null,lembrete:null,aula01:null,aula02:null,aula03:null,aulasConsolidado:null};
@@ -1343,7 +1344,7 @@ async function loadData(){
     for(const l of leadsRows)leadsByDate[l.date]=(leadsByDate[l.date]||0)+1;
 
     S.meta=mD; S.metaRows=metaRows; S.adIdMap=adIdMap;
-    S.leadsRows=leadsRows; S.leadsByDate=leadsByDate;
+    S.leadsRows=leadsRows; S.leadsRowsRaw=leadsRowsAll; S.leadsByDate=leadsByDate;
 
     const allDates=[...new Set([...Object.keys(mD),...Object.keys(leadsByDate)])].sort();
     S.updated=allDates.length?fDateBR(allDates[allDates.length-1]):"—";
@@ -1576,6 +1577,12 @@ function periodTotals(s,e){
 // start/end = null → sem limite naquele lado (usado pelo "Total - Consolidado")
 function leadsInRange(start,end){
   return S.leadsRows.filter(l=>(start===null||l.date>=start)&&(end===null||l.date<=end));
+}
+// Mesma coisa que leadsInRange, mas sobre a lista SEM dedup — só usado pra
+// mostrar "leads totais" (toda submissão, mesmo repetida) ao lado do número
+// de leads únicas na aba Principal (ver kpiCard "Leads captados").
+function leadsInRangeRaw(start,end){
+  return S.leadsRowsRaw.filter(l=>(start===null||l.date>=start)&&(end===null||l.date<=end));
 }
 // ── Campanhas / Anúncios: agregação com cross-filtering ───────────────────
 function getMetaRowsInRange(start,end){
@@ -2171,6 +2178,10 @@ function renderPrincipal(){
   const tempLabel={todos:"Todos",quente:"Quente",morno:"Morno",frio:"Frio"}[temp];
   const rowsCh=leadsForTemp(leadsForChannel(leadsInRange(S.startDate,S.endDate),ch),temp);
   const semUtmN=rowsCh.filter(l=>!l.hasUtm).length;
+  // Leads totais sem dedup (toda submissão do formulário conta, mesmo
+  // repetida) — só pra referência na observação do card "Leads captados",
+  // que mostra o número já deduplicado (S.leadsRows) como valor principal.
+  const leadsTotalRaw=leadsForTemp(leadsForChannel(leadsInRangeRaw(S.startDate,S.endDate),ch),temp).length;
   const ga4PageRows=getGA4PageRows(S.startDate,S.endDate);
   const ga4PageTotal=ga4PageRows.reduce((a,p)=>({sessions:a.sessions+p.sessions,cadastros:a.cadastros+p.cadastros}),{sessions:0,cadastros:0});
   const ga4PageTotalConv=ga4PageTotal.sessions>0?(ga4PageTotal.cadastros/ga4PageTotal.sessions)*100:null;
@@ -2210,7 +2221,7 @@ function renderPrincipal(){
 
     <div class="g3" style="margin-bottom:13px">
       ${kpiCard("Investimento",fBRL(pt.spend),ch==="organico"?"sem tráfego pago":`planejado até hoje: ${fBRL(plano.investimento)}`,ch==="organico"?"var(--text-strong)":investPlanoColor,false,ch==="organico"?null:pt.spend,plano.investimento>0?plano.investimento:null,false)}
-      ${kpiCard("Leads captados",pt.leads.toLocaleString("pt-BR"),`atingimento da meta: ${pctAtingimento!=null?fPct(pctAtingimento):"—"}${plano.leads>0?` (${pt.leads}/${plano.leads} planejados)`:""}${ch!=="organico"&&semUtmN>0?` · ${semUtmN} sem UTM`:""}`,leadsPlanoColor,false,plano.leads>0?pt.leads:null,plano.leads>0?plano.leads:null,true)}
+      ${kpiCard("Leads captados",pt.leads.toLocaleString("pt-BR"),`atingimento da meta: ${pctAtingimento!=null?fPct(pctAtingimento):"—"}${plano.leads>0?` (${pt.leads}/${plano.leads} planejados)`:""}${ch!=="organico"&&semUtmN>0?` · ${semUtmN} sem UTM`:""} · ${leadsTotalRaw.toLocaleString("pt-BR")} leads totais (sem dedup)`,leadsPlanoColor,false,plano.leads>0?pt.leads:null,plano.leads>0?plano.leads:null,true)}
       ${kpiCard("Custo/lead",pt.cpl!=null?fBRL(pt.cpl):"—",pt.cpl!=null?`meta ${fBRL(META_CPL)}`:"não aplicável",cplC,false,pt.cpl,META_CPL,false)}
     </div>
 
