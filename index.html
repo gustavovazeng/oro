@@ -856,12 +856,20 @@ function parseStageRows(rowsRaw){
 //   utm_medium  = "{nome campanha}id{campaign_id}"
 //   utm_content = "{nome anúncio}id{ad_id}"
 //   utm_term    = "{nome conjunto}id{adset_id}"
+// BUG histórico corrigido: os dados reais vêm como "{nome}_id_{id}" (com
+// underscore dos dois lados de "id"), não "{nome}id{id}" colado como o
+// regex original assumia. Isso fazia extractIdSuffix() retornar null pra
+// TODA lead real (ex.: "oro_mar25-leads-adv016f_id_120252916000360202"),
+// quebrando silenciosamente o cruzamento lead↔campanha/anúncio da Base Meta
+// — Leads e Faixas ficavam sempre vazios nas tabelas de Campanhas/Anúncios,
+// mesmo com dado nas duas planilhas. "_?" nas pontas mantém compatibilidade
+// com um formato antigo sem underscore, se aparecer.
 function extractIdSuffix(s){
-  const m=String(s||"").match(/id(\d{10,})$/);
+  const m=String(s||"").match(/_?id_?(\d{10,})$/);
   return m?m[1]:null;
 }
 function extractNamePrefix(s){
-  const m=String(s||"").match(/^(.+?)id\d{10,}$/);
+  const m=String(s||"").match(/^(.+?)_?id_?\d{10,}$/);
   return m?m[1]:(s||null);
 }
 // Temperatura do público vem no NOME DA CAMPANHA (ex.: "...-conversao-quente-...",
