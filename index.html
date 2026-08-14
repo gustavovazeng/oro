@@ -1577,10 +1577,11 @@ function resumoMetrics(s,e){
   const quenteMornoPct=rows.length>0?(quenteMornoRows.length/rows.length)*100:null;
   // Tx conv Pg cadastro: leads de tráfego ÷ sessões da página de captura
   // (Base GA4, só FBAds — exclusão da página de pesquisa/quiz pendente).
-  // Cai de volta pra aproximação
-  // leads/cliques quando não há dado de GA4 no período.
+  // SEM fallback aqui (diferente de trafficMetrics/Métricas de Tráfego): o
+  // Resumo diário usa só dado real do GA4 — fica "—" quando não há sessão
+  // no período, em vez de aproximar por cliques.
   const ga4=ga4Metrics(s,e,"todos");
-  const txConvPg=ga4.sessions>0?(leadsTrafego/ga4.sessions)*100:(per.clicks>0?(per.leads/per.clicks)*100:null);
+  const txConvPg=ga4.sessions>0?(leadsTrafego/ga4.sessions)*100:null;
   // Connect Rate: sessões (GA4) ÷ cliques no link (Meta Ads).
   const connectRate=(per.clicks>0&&ga4.sessions>0)?(ga4.sessions/per.clicks)*100:null;
   // Custo por cadastro AC Tráfego: todo o gasto é pago (tráfego), então o
@@ -2933,13 +2934,16 @@ function trafficMetrics(start,end,temp){
   // Tx Pág → Cadastro: leads de tráfego ÷ sessões da página de captura (Base
   // GA4, só FBAds — exclusão da página de pesquisa/quiz pendente). Cai de volta pra aproximação
   // leads/cliques quando não há dado de GA4 no período (ex.: antes da Base
-  // GA4 existir).
+  // GA4 existir) — txConvPgAprox sinaliza quando é essa aproximação, pra UI
+  // avisar que não é o dado real do GA4 (diferente do Resumo diário, que não
+  // tem esse fallback).
+  const txConvPgAprox=ga4.sessions===0&&m.clicks>0;
   const txConvPg=ga4.sessions>0?(leadsTrafego/ga4.sessions)*100:(m.clicks>0?(leads/m.clicks)*100:null);
   // Connect Rate: sessões da página de captura (GA4) ÷ cliques no link (Meta
   // Ads) — mede quantos de quem clicou no anúncio realmente carregou a
   // página. Só existe quando há dado de GA4 no período.
   const connectRate=(m.clicks>0&&ga4.sessions>0)?(ga4.sessions/m.clicks)*100:null;
-  return{spend:m.spend,leads,cpl,cpc,ctr,cpm,txConvPg,connectRate};
+  return{spend:m.spend,leads,cpl,cpc,ctr,cpm,txConvPg,txConvPgAprox,connectRate};
 }
 function getDailyTraffic(start,end,temp){
   const dates=new Set(Object.keys(S.meta));
@@ -3055,9 +3059,11 @@ function renderMetricasTrafego(){
   const ultimos3=trafficMetrics(y3,y1,temp);
   const daily=getDailyTraffic(S.startDate,S.endDate,temp);
 
-  function metricCard(lbl,val,metaVal,higher,fmt,rawVal){
+  function metricCard(lbl,val,metaVal,higher,fmt,rawVal,aproxNote){
     const color=(rawVal!=null&&metaVal!=null)?statusColor(rawVal,metaVal,higher):"var(--text-strong)";
-    return kpiCard(lbl,val,metaVal!=null?`Meta: ${fmt(metaVal)}`:"",color,false,rawVal,metaVal,higher);
+    const metaTxt=metaVal!=null?`Meta: ${fmt(metaVal)}`:"";
+    const sub=aproxNote?`${metaTxt}${metaTxt?" · ":""}⚠️ ${aproxNote}`:metaTxt;
+    return kpiCard(lbl,val,sub,color,false,rawVal,metaVal,higher);
   }
   function panelCards(m){
     return `
@@ -3066,7 +3072,7 @@ function renderMetricasTrafego(){
       ${metricCard("CPC",m.cpc!=null?fBRL(m.cpc):"—",METAS_RESUMO.cpc.val,METAS_RESUMO.cpc.higher,fBRL,m.cpc)}
       ${metricCard("CTR",fPctOrDash(m.ctr),METAS_RESUMO.ctr.val,METAS_RESUMO.ctr.higher,v=>fPct(v),m.ctr)}
       ${metricCard("CPM",m.cpm!=null?fBRL(m.cpm):"—",METAS_RESUMO.cpm.val,METAS_RESUMO.cpm.higher,fBRL,m.cpm)}
-      ${metricCard("Tx Pág → Cadastro",fPctOrDash(m.txConvPg),METAS_RESUMO.txConvPg.val,METAS_RESUMO.txConvPg.higher,v=>fPct(v),m.txConvPg)}
+      ${metricCard("Tx Pág → Cadastro",fPctOrDash(m.txConvPg),METAS_RESUMO.txConvPg.val,METAS_RESUMO.txConvPg.higher,v=>fPct(v),m.txConvPg,m.txConvPgAprox?"aproximado por cliques (sem sessão GA4 no período)":null)}
       ${metricCard("Connect Rate",fPctOrDash(m.connectRate),METAS_RESUMO.connectRate.val,METAS_RESUMO.connectRate.higher,v=>fPct(v),m.connectRate)}
     `;
   }
