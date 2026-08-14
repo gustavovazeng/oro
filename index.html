@@ -3072,7 +3072,7 @@ function renderMetricasTrafego(){
       ${metricCard("CPC",m.cpc!=null?fBRL(m.cpc):"—",METAS_RESUMO.cpc.val,METAS_RESUMO.cpc.higher,fBRL,m.cpc)}
       ${metricCard("CTR",fPctOrDash(m.ctr),METAS_RESUMO.ctr.val,METAS_RESUMO.ctr.higher,v=>fPct(v),m.ctr)}
       ${metricCard("CPM",m.cpm!=null?fBRL(m.cpm):"—",METAS_RESUMO.cpm.val,METAS_RESUMO.cpm.higher,fBRL,m.cpm)}
-      ${metricCard("Tx Pág → Cadastro",fPctOrDash(m.txConvPg),METAS_RESUMO.txConvPg.val,METAS_RESUMO.txConvPg.higher,v=>fPct(v),m.txConvPg,m.txConvPgAprox?"aproximado por cliques (sem sessão GA4 no período)":null)}
+      ${metricCard("Tx Pág → Cadastro",fPctOrDash(m.txConvPg),METAS_RESUMO.txConvPg.val,METAS_RESUMO.txConvPg.higher,v=>fPct(v),m.txConvPg,m.txConvPgAprox?"cliques reais do Meta Ads (sem sessão GA4 no período)":null)}
       ${metricCard("Connect Rate",fPctOrDash(m.connectRate),METAS_RESUMO.connectRate.val,METAS_RESUMO.connectRate.higher,v=>fPct(v),m.connectRate)}
     `;
   }
