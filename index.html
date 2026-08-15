@@ -541,6 +541,92 @@ const CHART_FAIXA = {"A+":"#059669",A:"#34d399",B:"#60a5fa",C:"#fbbf24",D:"#f871
 const CHART_ELTON = "#60a5fa";
 const CHART_AD    = "#a78bfa";
 
+// ── Pontuação manual do quiz (ignora score_total/faixa que vêm da Base leads
+// no Sheets — essas colunas vêm com bugs de corrupção de número em várias
+// linhas, ex.: score_total "18.458.999.999.999.900" — inválido) ───────────
+// A pontuação de cada resposta e os cortes de faixa foram fornecidos
+// manualmente pelo usuário (14/ago/26). Cálculo: soma os pontos de todas as
+// perguntas do quiz que a lead respondeu (pergunta em branco = 0 pontos,
+// não quebra o cálculo); o total decide a faixa pelos cortes abaixo.
+function normAnswer(s){
+  return String(s||"").trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"");
+}
+function scoreLookup(map){
+  const norm={};
+  for(const k in map)norm[normAnswer(k)]=map[k];
+  return norm;
+}
+const QUIZ_POINTS = {
+  trabalho: scoreLookup({
+    "Autônomo":20.61,"Empresário":46.88,"Funcionário Público":10.4,
+    "Funcionário CLT":8.15,"Aposentado":10.26,"Funcionário PJ":20.61,
+    "Estou desempregado no momento":10.44,"Profissional Liberal":31.52,
+  }),
+  senteSozinho: scoreLookup({
+    "Nunca":6.73,"Raramente":11.39,"Às vezes":13.96,"Frequentemente":22.26,"Sempre":20.94,
+  }),
+  terapia: scoreLookup({"Não":8.31,"Sim":29.04}),
+  eficaz: scoreLookup({"Nunca fiz":11.24,"Não":16.32,"Sim":13.89,"Parcialmente":26.51}),
+  idade: scoreLookup({
+    "18-24":7.13,"25-35":14.78,"36-45":19.25,"46-55":18.55,"56 ou mais":14.6,
+  }),
+  escolaridade: scoreLookup({
+    "Ensino Fundamental 1 (1º ao 5º ano)":6.42,
+    "Ensino Fundamental 2 (6º ao 9º ano)":7.64,
+    "Ensino Médio (1º ao 3º)":8.88,
+    "Ensino Superior Incompleto":14.1,
+    "Ensino Superior (Graduação/Faculdade)":20.95,
+    "Pós-Graduação":23.97,
+    "Mestrado":37.31,
+    "Doutorado":37.24,
+  }),
+  sexo: scoreLookup({"Sou do sexo Feminino":12.86,"Sou do sexo Masculino":22.18}),
+  // Estado civil: o Sheets grava sempre no formato "Casado(o)"/"Solteiro(o)"/
+  // etc. (opção fixa do formulário, não flexiona por gênero da lead) — mas
+  // deixamos as duas variantes ("...(o)"/"...a(o)") mapeadas por segurança.
+  estadoCivil: scoreLookup({
+    "Solteiro(o)":14.39,"Solteira(o)":14.39,
+    "Casado(o)":14.57,"Casada(o)":14.57,
+    "Separado(o)":19.99,"Separada(o)":19.99,
+    "Viúvo(o)":14.63,"Viúva(o)":14.63,
+  }),
+  filhos: scoreLookup({"Não":18.83,"Sim":14.68}),
+  renda: scoreLookup({
+    "Até R$ 1.000,00":6.86,
+    "De R$ 1.101,00 a R$ 2.500,00":9.82,
+    "De R$ 2.501,00 a R$ 4.000,00":16.21,
+    "De R$ 4.001,00 a R$ 10.000,00":25.55,
+    "Acima de R$ 10.000,00":40.83,
+  }),
+};
+const QUIZ_CATS = ["trabalho","senteSozinho","terapia","eficaz","idade","escolaridade","sexo","estadoCivil","filhos","renda"];
+// Cortes de faixa (score total), fornecidos manualmente pelo usuário
+// (14/ago/26). A tabela original tinha sobreposição entre A (limite superior
+// 285) e A+ (limite inferior 204,2) — resolvido usando o LIMITE INFERIOR de
+// cada faixa como corte real: cada faixa vira o intervalo
+// [limiteInferior, próximoLimiteInferior), e a mais alta (A+) fica sem teto.
+// Checagem em ordem decrescente garante que cada score caia em 1 única faixa.
+const FAIXA_THRESHOLDS = [
+  {letter:"A+", min:204.2},
+  {letter:"A",  min:180.3},
+  {letter:"B",  min:162.7},
+  {letter:"C",  min:136.3},
+  {letter:"D",  min:124.9},
+  {letter:"E",  min:0},
+];
+function calcScore(l){
+  let total=0;
+  for(const cat of QUIZ_CATS){
+    const pts=QUIZ_POINTS[cat][normAnswer(l[cat])];
+    if(pts!=null)total+=pts;
+  }
+  return total;
+}
+function calcFaixa(score){
+  for(const t of FAIXA_THRESHOLDS)if(score>=t.min)return t.letter;
+  return "E";
+}
+
 // ── State ─────────────────────────────────────────────────────────────────
 const S = {
   funilAtivo:"europa",   // chave em FUNIS — funil/lançamento selecionado no momento
@@ -1335,11 +1421,10 @@ async function loadData(){
       const hasUtm=utmSourceRaw.length>0;
       const channel=(!hasUtm||utmSourceRaw.startsWith("FBAds"))?"trafego":"organico";
 
-      leadsRowsAll.push({
+      const leadObj = {
         date,ms,
         path:(r["path"]||"").trim(), // página onde a lead se cadastrou (bate com "Page Path" da Base GA4)
         quizOk:(r["Quiz respondido?"]||"").trim()==="Sim",
-        faixa:(r["faixa"]||"").trim(),
         name:(r["name"]||"").trim(),
         email:normalizeEmail(r["person_email"]), // já normalizado — usado tb como chave de dedup
         phone:normalizePhone(r["person_phone"]), // já normalizado — usado tb como chave de dedup
@@ -1362,7 +1447,17 @@ async function loadData(){
         filhos:(r["Você tem filhos?"]||"").trim(),
         renda:(r["Qual das opções representa a sua renda mensal hoje?"]||"").trim(),
         trabalho:(r["Você trabalha como (marque o trabalho que te gera mais renda):"]||"").trim(),
-      });
+        senteSozinho:(r["Com que frequência você se sente sozinho(a)/travado(a) e com baixos resultados?"]||"").trim(),
+        terapia:(r["Você já buscou algum tipo de ajuda ou suporte (terapia, coaching, grupos de apoio) para lidar com seus desafios emocionais?"]||"").trim(),
+        eficaz:(r["Se sim, o método utilizado foi eficaz?"]||"").trim(),
+      };
+      // Faixa/pontuação calculadas manualmente (ver QUIZ_POINTS/FAIXA_THRESHOLDS
+      // acima) — NÃO usa mais as colunas "score_total"/"faixa" do Sheets, que
+      // vêm com bug de corrupção de número em várias linhas. Sem resposta ao
+      // quiz = sem score/faixa (igual ao comportamento anterior).
+      leadObj.scoreCalc = leadObj.quizOk ? calcScore(leadObj) : null;
+      leadObj.faixa = leadObj.quizOk ? calcFaixa(leadObj.scoreCalc) : "";
+      leadsRowsAll.push(leadObj);
     }
     const leadsRows=dedupByContact(leadsRowsAll);
     const leadsByDate={};
