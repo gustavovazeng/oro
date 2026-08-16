@@ -1719,6 +1719,12 @@ function getMetaRowsInRange(start,end){
 function getLeadsRowsForCamp(start,end,campName){
   return S.leadsRows.filter(l=>l.date>=start&&l.date<=end&&l.campName===campName);
 }
+// Versão SEM dedup — mesma base usada no GAP da aba Principal (ver getDaily):
+// o gerenciador do Meta (actionLeads) também não deduplica por contato, então
+// comparar contra a contagem já deduplicada infla o GAP artificialmente.
+function getLeadsRowsForCampRaw(start,end,campName){
+  return S.leadsRowsRaw.filter(l=>l.date>=start&&l.date<=end&&l.campName===campName);
+}
 function getLeadsRowsForAd(start,end,adName,campFilter){
   return S.leadsRows.filter(l=>{
     if(l.date<start||l.date>end)return false;
@@ -1749,7 +1755,13 @@ function getCampRows(start,end){
     const leadsArr=getLeadsRowsForCamp(start,end,c.campName);
     const leads=leadsArr.length;
     const q=qualityFromLeadsArray(leadsArr);
-    return {...c,leads,...q,
+    // GAP isolado por campanha: leads TOTAIS (sem dedup) daquela campanha vs.
+    // os leads que o gerenciador do Meta reportou pra ela (actionLeads) —
+    // mesma fórmula da aba Principal, mas calculada por campanha em vez do
+    // total do período (ver comentário em getDaily).
+    const leadsTotal=getLeadsRowsForCampRaw(start,end,c.campName).length;
+    const gapPct=leadsTotal>0?((c.actionLeads-leadsTotal)/leadsTotal)*100:null;
+    return {...c,leads,leadsTotal,gapPct,...q,
       cpc:c.clicks>0?c.spend/c.clicks:0, ctr:c.impressions>0?(c.clicks/c.impressions)*100:0,
       cpm:c.impressions>0?(c.spend/c.impressions)*1000:0, cpl:leads>0?c.spend/leads:0};
   });
@@ -2602,9 +2614,10 @@ function renderAnuncios(){
           ${thC("cpm","CPM",true)}
           ${thC("cpc","CPC",true)}
           ${thC("ctr","CTR",true)}
+          ${thC("gapPct","GAP",true)}
         </tr></thead>
         <tbody>
-          ${sortedCamps.length===0?`<tr><td colspan="15" style="text-align:center;color:var(--hint);padding:20px">Sem dados de campanhas no período</td></tr>`:
+          ${sortedCamps.length===0?`<tr><td colspan="16" style="text-align:center;color:var(--hint);padding:20px">Sem dados de campanhas no período</td></tr>`:
           sortedCamps.map(c=>{
             const sel=S.selectedCamps.has(c.campName);
             return `<tr onclick="toggleCamp('${escName(c.campName)}')" style="cursor:pointer;background:${sel?"rgba(16,185,129,.1)":"transparent"}">
@@ -2623,6 +2636,7 @@ function renderAnuncios(){
               <td class="mono" style="text-align:right">${fBRL(c.cpm)}</td>
               <td class="mono" style="text-align:right">${fBRL(c.cpc)}</td>
               <td class="mono" style="text-align:right">${fPct(c.ctr)}</td>
+              <td class="mono" style="text-align:right;color:${CHART_GAP}">${fPctOrDash(c.gapPct)}</td>
             </tr>`;
           }).join("")}
         </tbody>
