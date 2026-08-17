@@ -602,8 +602,8 @@ function drawBarLineDual(id,data,barKey,barColor,barFmt,lineKey,lineColor,lineFm
 // ── Nav ──
 function navTo(id){
   S.currentPage=id;
-  document.querySelectorAll("#hdr-tabs .htab").forEach((b,i)=>b.classList.toggle("htab-active",TABS[i]===id));
-  document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));
+  document.querySelectorAll("#j26-hdr-tabs .htab").forEach((b,i)=>b.classList.toggle("htab-active",TABS[i]===id));
+  document.querySelectorAll("#app-jul26 .page").forEach(p=>p.classList.remove("active"));
   document.getElementById("j26-page-"+id).classList.add("active");
   renderTab(id);
 }
@@ -2254,9 +2254,6 @@ window.AppSwitch = {
     document.getElementById('app-jul26').style.display = which==='jul26' ? '' : 'none';
   }
 };
-// Glue: injeta "oro_jul26 — Debriefing" como item extra dentro do MESMO dropdown
-// de funil do oro_ago26 (#funil-wrap), sem alterar o código-fonte do oro_ago26.
-// Dot azul (var(--accent)) pra diferenciar visualmente de "ativo" (verde).
 (function(){
   function injectJul26Item(){
     const wrap = document.getElementById('funil-wrap');
@@ -3846,7 +3843,7 @@ function activePageId(){
 }
 function updatePageVisibility(){
   const id=activePageId();
-  document.querySelectorAll(".page").forEach(el=>{
+  document.querySelectorAll("#app-ago26 .page").forEach(el=>{
     el.classList.toggle("active",el.id===id);
   });
 }
@@ -6785,7 +6782,7 @@ function renderPlanoReal(){
 function render(){
   const loadingEl=document.getElementById("loading");
   if(loadingEl)loadingEl.style.display=S.loading?"flex":"none";
-  document.querySelectorAll(".page").forEach(el=>{el.style.display=(el.classList.contains("active")&&!S.loading)?"block":"none";});
+  document.querySelectorAll("#app-ago26 .page").forEach(el=>{el.style.display=(el.classList.contains("active")&&!S.loading)?"block":"none";});
   if(S.loading)return;
   renderHeader();
   if(S.currentPage==="captacao"){
