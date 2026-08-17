@@ -603,8 +603,9 @@ function drawBarLineDual(id,data,barKey,barColor,barFmt,lineKey,lineColor,lineFm
 function navTo(id){
   S.currentPage=id;
   document.querySelectorAll("#j26-hdr-tabs .htab").forEach((b,i)=>b.classList.toggle("htab-active",TABS[i]===id));
-  document.querySelectorAll("#app-jul26 .page").forEach(p=>p.classList.remove("active"));
-  document.getElementById("j26-page-"+id).classList.add("active");
+  document.querySelectorAll("#app-jul26 .page").forEach(p=>{p.classList.remove("active");p.style.display="none";});
+  const __ativa=document.getElementById("j26-page-"+id);
+  if(__ativa){__ativa.classList.add("active");__ativa.style.display="block";}
   renderTab(id);
 }
 function renderTab(id){
