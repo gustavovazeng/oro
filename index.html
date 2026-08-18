@@ -6221,8 +6221,6 @@ function lembreteResumoHtml(){
   const m=stageMetrics(rows);
   const alcance=S.manualAlcance.lembrete;
   const freq=alcance>0?m.impressions/alcance:null;
-  const leadsAoVivo=S.leadsRows.length;
-  const likesRows=lembreteLikesRows(leadsAoVivo).map(r=>({label:`${fDateBR(r.date)}${r.diasFaltam!=null?` (faltam ${r.diasFaltam}d)`:""}`,likes:r.likes,fatorX:r.fatorX,meta:r.meta}));
   const bench=lembreteBenchmarkHoje();
   const planAteHoje=planoAteHojeLembrete();
   const clicksEsperados=bench&&bench.cpc>0?planAteHoje/bench.cpc:null;
@@ -6236,9 +6234,6 @@ function lembreteResumoHtml(){
   }
   return `
     <div style="font-size:11px;color:var(--hint);margin-bottom:12px">benchmark oro_jul26 (curva por dia) · ${benchLbl}</div>
-    ${stageResumoCard("👍 Likes na aula01 (checkpoint 12:00, vs. fator X × leads ao vivo)",
-      likesBenchmarkTableHtml(likesRows,"Dia")
-    )}
     ${totalOuFacebookCard("-&gt; Total")}
     ${stageResumoCard("-&gt; Facebook",
       stageRow("Investido total",fBRL(m.spend),`planej até hoje: ${fBRL(planAteHoje)}`,"")+
@@ -6258,8 +6253,6 @@ function lembreteResumoText(){
   const m=stageMetrics(rows);
   const alcance=S.manualAlcance.lembrete;
   const freq=alcance>0?m.impressions/alcance:null;
-  const leadsAoVivo=S.leadsRows.length;
-  const likesRows=lembreteLikesRows(leadsAoVivo).map(r=>({label:`${fDateBR(r.date)}${r.diasFaltam!=null?` (faltam ${r.diasFaltam}d)`:""}`,likes:r.likes,fatorX:r.fatorX,meta:r.meta}));
   const bench=lembreteBenchmarkHoje();
   const planAteHoje=planoAteHojeLembrete();
   const clicksEsperados=bench&&bench.cpc>0?planAteHoje/bench.cpc:null;
@@ -6268,13 +6261,9 @@ function lembreteResumoText(){
   const emFreq=bench&&freq!=null?metaEmojiGlobal(freq,bench.freq,false):"⚪";
   const clicksLine=clicksEsperados!=null?`${emClicks} Plan até hoje: ${Math.round(clicksEsperados).toLocaleString("pt-BR")}`:"sem benchmark p/ hoje";
   const cpcLine=bench?`${emCpc} Plan consolidado: ${fBRL(bench.cpc)}`:"sem benchmark p/ hoje";
-  const benchNote=bench?`(faltam ${bench.diasFaltam}d p/ Aula 01)`:"(hoje fora da janela de benchmark: 1-7 dias antes da Aula 01)";
   return `*oro_ago26 ${funilNomeCurto()} - Resumo Lembrete - Bench oro_jul26*
 
 Date\t${fDateBR(todayISO())}
-
-👍 Likes na aula01 (checkpoint 12:00, vs. fator X × leads ao vivo)
-${likesBenchmarkTableText(likesRows,"Dia")}
 
 -> Total
 Investido total: ${fBRL(m.spend)}\t(planej até hoje: ${fBRL(planAteHoje)})
@@ -6290,9 +6279,7 @@ Cliques totais:\t${m.clicks.toLocaleString("pt-BR")}\t${clicksLine}
 
 CPC:\t\t${m.cpc!=null?fBRL(m.cpc):"—"}\t${cpcLine}
 Alcance:\t${alcance?alcance.toLocaleString("pt-BR"):"—"}
-Frequencia:\t${freq!=null?freq.toFixed(2).replace(".",","):"—"}\t${bench?`(${emFreq} Meta hj: ${String(bench.freq).replace(".",",")})`:"(sem benchmark p/ hoje)"}
-
-${benchNote}`;
+Frequencia:\t${freq!=null?freq.toFixed(2).replace(".",","):"—"}\t${bench?`(${emFreq} Meta hj: ${String(bench.freq).replace(".",",")})`:"(sem benchmark p/ hoje)"}`;
 }
 // Cada aula é identificada pelo NOME DA CAMPANHA (via aulaNumberFromCampaign)
 // — não por uma coluna própria, já que a Base Meta - Aulas mistura as 3
