@@ -3273,15 +3273,18 @@ function processCarrinhoVendas(vendasRowsRaw){
     faturamentoTotal+=valor;
     const ms=parseFichaDateTimeMs(r["Data Correta"]);
     const d=ms!=null?msToISO(ms):null;
-    if(d){porDia[d]=(porDia[d]||0)+1; valorPorDia[d]=(valorPorDia[d]||0)+valor;}
     const candidates=[];
     if(ph&&earliestByPhone[ph])candidates.push(earliestByPhone[ph]);
     if(em&&earliestByEmail[em])candidates.push(earliestByEmail[em]);
+    let vd=d; // data usada pro gráfico "Vendas por dia": própria venda, com
+              // fallback pra data da ficha casada — a "Base vendas" real não
+              // tem coluna de data, então sem esse fallback o gráfico fica
+              // sempre zerado mesmo com vendas casadas.
     if(candidates.length){
       candidates.sort((a,b)=>a.ms-b.ms);
       const best=candidates[0];
       matched++;
-      const vd=d||best.date; // fallback pra data da ficha se "Data Correta" vier vazia/quebrada
+      vd=d||best.date;
       if(best.tipo==="traf"){
         vendaAttrib.push({date:vd,adName:best.adName||"(sem atribuição)",campName:best.campName||"(sem atribuição)",valor});
       }
@@ -3289,6 +3292,7 @@ function processCarrinhoVendas(vendasRowsRaw){
     }else{
       unmatched++;
     }
+    if(vd){porDia[vd]=(porDia[vd]||0)+1; valorPorDia[vd]=(valorPorDia[vd]||0)+valor;}
   }
   S.carrinhoVendaAttrib=vendaAttrib;
   S.carrinhoVendaOrigem=vendaOrigem;
@@ -5442,17 +5446,20 @@ function getCarrinhoDaily(start,end){
     if(!metaByDate[r.date])metaByDate[r.date]={spend:0,clicks:0};
     metaByDate[r.date].spend+=r.spend;metaByDate[r.date].clicks+=r.clicks;
   }
-  const fichasByDate={},fichasComPrecoByDate={};
+  const fichasByDate={},fichasComPrecoByDate={},fichasTrafByDate={},fichasOrgByDate={};
   for(const f of S.carrinhoFichaOrigem){
     if(f.date<start||f.date>end)continue;
     fichasByDate[f.date]=(fichasByDate[f.date]||0)+1;
     if(f.comPreco)fichasComPrecoByDate[f.date]=(fichasComPrecoByDate[f.date]||0)+1;
+    if(f.tipo==="traf")fichasTrafByDate[f.date]=(fichasTrafByDate[f.date]||0)+1;
+    else fichasOrgByDate[f.date]=(fichasOrgByDate[f.date]||0)+1;
   }
   const dates=new Set([...Object.keys(metaByDate),...Object.keys(fichasByDate)]);
   return[...dates].sort().map(d=>{
     const m=metaByDate[d]||{spend:0,clicks:0};
     const fichas=fichasByDate[d]||0, fichasComPreco=fichasComPrecoByDate[d]||0;
-    return{date:d,label:fDate(d),spend:m.spend,clicks:m.clicks,fichas,fichasComPreco,
+    const fichasTraf=fichasTrafByDate[d]||0, fichasOrg=fichasOrgByDate[d]||0;
+    return{date:d,label:fDate(d),spend:m.spend,clicks:m.clicks,fichas,fichasComPreco,fichasTraf,fichasOrg,
       custoFichaComPreco:fichasComPreco>0?m.spend/fichasComPreco:null};
   });
 }
@@ -5498,8 +5505,18 @@ function renderCarrinhoPrincipal(){
       <div style="position:relative"><canvas id="c-carrinho-dual"></canvas><div class="tip" id="t-carrinho-dual"></div></div>
     </div>
 
+    <div class="cc" style="position:relative;margin-bottom:14px">
+      <div class="ch"><span class="ct">Fichas por dia (tráfego)</span></div>
+      <div style="position:relative"><canvas id="c-carrinho-fichas-traf"></canvas><div class="tip" id="t-carrinho-fichas-traf"></div></div>
+    </div>
+
+    <div class="cc" style="position:relative;margin-bottom:14px">
+      <div class="ch"><span class="ct">Fichas por dia (orgânico)</span></div>
+      <div style="position:relative"><canvas id="c-carrinho-fichas-org"></canvas><div class="tip" id="t-carrinho-fichas-org"></div></div>
+    </div>
+
     <div class="cc" style="position:relative;margin-bottom:20px">
-      <div class="ch"><span class="ct">Fichas por dia</span></div>
+      <div class="ch"><span class="ct">Fichas por dia (total)</span></div>
       <div style="position:relative"><canvas id="c-carrinho-fichas"></canvas><div class="tip" id="t-carrinho-fichas"></div></div>
     </div>
 
@@ -5512,6 +5529,16 @@ function renderCarrinhoPrincipal(){
     setupTip("c-carrinho-dual","t-carrinho-dual",daily,[
       {name:"Investimento",color:CHART_INV,key:"spend",fmt:fBRL},
       {name:"Custo/ficha c/ preço",color:CHART_CPL,key:"custoFichaComPreco",fmt:fBRL}],64,12);
+
+    const box2t=document.getElementById("c-carrinho-fichas-traf")?.parentElement;
+    if(box2t)drawBarSingle("c-carrinho-fichas-traf",daily,"fichasTraf",CHART_INV,box2t.clientWidth,200);
+    setupTip("c-carrinho-fichas-traf","t-carrinho-fichas-traf",daily,[
+      {name:"Fichas tráfego",color:CHART_INV,key:"fichasTraf",fmt:v=>String(v)}],40,12);
+
+    const box2o=document.getElementById("c-carrinho-fichas-org")?.parentElement;
+    if(box2o)drawBarSingle("c-carrinho-fichas-org",daily,"fichasOrg",CHART_QUIZ,box2o.clientWidth,200);
+    setupTip("c-carrinho-fichas-org","t-carrinho-fichas-org",daily,[
+      {name:"Fichas orgânico",color:CHART_QUIZ,key:"fichasOrg",fmt:v=>String(v)}],40,12);
 
     const box2=document.getElementById("c-carrinho-fichas")?.parentElement;
     if(box2)drawBarSingle("c-carrinho-fichas",daily,"fichas",CHART_LEAD,box2.clientWidth,200);
