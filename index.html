@@ -2526,6 +2526,13 @@ const SHEET_LEADS_NAME = "Base leads";
 const SHEET_AQUECIMENTO_NAME = "Base Meta - aquecimento";
 const SHEET_LEMBRETE_NAME = "Base Meta - lembrete";
 const SHEET_AULAS_NAME = "Base Meta - Aulas";
+// Investimento do Carrinho tem sheet própria (igual Aquecimento/Lembrete/
+// Aulas) — NÃO vem misturado na "Base Meta - captação". Antes o código
+// tentava filtrar S.metaRows (só campanhas de Captação) procurando
+// campaignStage==="Carrinho", mas essas campanhas nunca estão lá — por isso
+// o investimento do Carrinho sempre aparecia zerado, tanto no Principal
+// quanto no Resumo diário.
+const SHEET_CARRINHO_META_NAME = "Base Meta - carrinho";
 // Fichas de interesse do Carrinho — mesmo modelo de outro projeto ("oro_jul26"),
 // replicado aqui: Tráfego (fichas de tráfego pago) + Orgânico/Disparo (somados
 // numa única categoria "orgânico", mesmo padrão do modelo original).
@@ -2722,6 +2729,7 @@ const S = {
   aquecimentoRows:[],    // linhas da Base Meta - aquecimento: {date,campName,adName,igUrl,spend,clicks,impressions,video75}
   lembreteRows:[],       // idem, Base Meta - lembrete
   aulasRows:[],          // idem, Base Meta - Aulas (uma ou mais campanhas por aula, ver aulaNumberFromCampaign)
+  carrinhoMetaRows:[],   // idem, Base Meta - carrinho (investimento do Carrinho — sheet própria, não vem da Base Meta - captação)
   manualAlcance:{aquecimento:null,lembrete:null,aula01:null,aula02:null,aula03:null,aulasConsolidado:null}, // Alcance manual (API não fornece) — usado pra calcular Frequência
   // Estado das páginas de análise por etapa (Aquecimento/Lembrete/Aula01/02/03/Consolidado)
   stageChartMetric:{aquecimento:"cpc",lembrete:"cpc",aula01:"cpc",aula02:"cpc",aula03:"cpc",aulaConsolidado:"cpc"}, // toggle do gráfico "Acumulado por dia": cpc|tx75|cptx75
@@ -2785,7 +2793,7 @@ function resetFunilData(){
   S.meta={}; S.metaRows=[]; S.adIdMap={};
   S.leadsRows=[]; S.leadsRowsRaw=[]; S.leadsByDate={};
   S.ga4Rows=[]; S.likesRows=[];
-  S.aquecimentoRows=[]; S.lembreteRows=[]; S.aulasRows=[];
+  S.aquecimentoRows=[]; S.lembreteRows=[]; S.aulasRows=[]; S.carrinhoMetaRows=[];
   S.manualAlcance={aquecimento:null,lembrete:null,aula01:null,aula02:null,aula03:null,aulasConsolidado:null};
   S.carrinhoFichaAttrib=[]; S.carrinhoFichaOrigem=[]; S.carrinhoFichaOrigemUnica=[];
   S.carrinhoTrafego={}; S.carrinhoTrafegoComPreco={};
@@ -3090,6 +3098,7 @@ function stageRowsForStage(stage){
   if(stage==="Aquecimento")return S.aquecimentoRows||[];
   if(stage==="Lembrete")return S.lembreteRows||[];
   if(stage==="Aulas")return S.aulasRows||[];
+  if(stage==="Carrinho")return S.carrinhoMetaRows||[];
   return S.metaRows.filter(r=>campaignStage(r.campName)===stage);
 }
 // Investimento realizado de uma etapa numa data específica.
@@ -3680,6 +3689,18 @@ async function loadData(){
       render();
     }catch(e){
       console.error("Erro ao carregar vendas do Carrinho (Base vendas):",e);
+    }
+  })();
+
+  // Investimento do Carrinho (sheet própria "Base Meta - carrinho" — igual
+  // Aquecimento/Lembrete/Aulas, ver comentário na constante SHEET_CARRINHO_META_NAME).
+  (async()=>{
+    try{
+      const carrinhoMetaCsv = await fetchSheetCSV(SHEET_CARRINHO_META_NAME);
+      S.carrinhoMetaRows = parseStageRows(parseRows(parseCSVText(carrinhoMetaCsv)));
+      render();
+    }catch(e){
+      console.error("Erro ao carregar investimento do Carrinho (Base Meta - carrinho):",e);
     }
   })();
 
@@ -5127,6 +5148,7 @@ ${textBlock("Hoje",hoje,fDateBR(today),ch_,planForDate(today),null,true)}`;
     ${stageResumoSection("🔥 Resumo Aquecimento",`dados carregados: ${S.aquecimentoRows.length} linha(s)`,aquecimentoResumoHtml(),"aquecimento",aquecimentoResumoText())}
     ${stageResumoSection("🔔 Resumo Lembrete",`dados carregados: ${S.lembreteRows.length} linha(s)`,lembreteResumoHtml(),"lembrete",lembreteResumoText())}
     ${stageResumoSection("🎓 Resumo Aulas","3 aulas · identificadas pelo nome da campanha",aulasResumoHtml(),"aulas",aulasResumoText())}
+    ${stageResumoSection("🛒 Resumo Carrinho",`dados carregados: ${(S.carrinhoMetaRows||[]).length} linha(s)`,carrinhoResumoHtml(),"carrinho",carrinhoResumoText())}
 
     <div class="foot">ORO · Captação · dados locais (CSV embutido)</div>`;
   el._resumoText=resumoText;
@@ -5417,12 +5439,14 @@ function renderStagePage(pageId,label,planArr){
 }
 
 // ── Carrinho: Principal (KPIs + gráficos) ───────────────────────────────────
-// Investimento/cliques vêm da MESMA Base Meta - captação, filtrada por
-// campanha (via campaignStage==="Carrinho") — o Carrinho não tem uma sheet de
-// mídia própria, suas campanhas só se identificam pelo nome, igual às outras
-// etapas. Fichas vêm das 3 sheets processadas em processCarrinhoFichas().
+// Investimento vem da sheet própria "Base Meta - carrinho" (ver
+// SHEET_CARRINHO_META_NAME/S.carrinhoMetaRows) — igual Aquecimento/Lembrete/
+// Aulas, NÃO da Base Meta - captação. Fichas vêm das 3 sheets processadas em
+// processCarrinhoFichas(). Custo/ficha (total e com preço) considera só
+// fichas de TRÁFEGO — orgânico não entra em nenhum número do Principal, só
+// aparece na sub-aba Fichas.
 function carrinhoMetaRowsInRange(start,end){
-  return S.metaRows.filter(r=>r.date>=start&&r.date<=end&&campaignStage(r.campName)==="Carrinho");
+  return (S.carrinhoMetaRows||[]).filter(r=>r.date>=start&&r.date<=end);
 }
 function carrinhoFichasInRange(fichas,start,end){
   return fichas.filter(f=>f.date>=start&&f.date<=end);
@@ -5431,35 +5455,39 @@ function carrinhoMetrics(start,end){
   const metaRows=carrinhoMetaRowsInRange(start,end);
   const spend=metaRows.reduce((a,r)=>a+r.spend,0);
   const clicks=metaRows.reduce((a,r)=>a+r.clicks,0);
-  const fichas=carrinhoFichasInRange(S.carrinhoFichaOrigem,start,end);
-  const fichasTotal=fichas.length;
-  const fichasComPreco=fichas.filter(f=>f.comPreco).length;
+  const fichasTraf=carrinhoFichasInRange(S.carrinhoFichaOrigem,start,end).filter(f=>f.tipo==="traf");
+  const fichasTotal=fichasTraf.length;
+  const fichasComPreco=fichasTraf.filter(f=>f.comPreco).length;
   return{spend,clicks,fichasTotal,fichasComPreco,
     custoFicha:fichasTotal>0?spend/fichasTotal:null,
     custoFichaComPreco:fichasComPreco>0?spend/fichasComPreco:null};
 }
 function getCarrinhoDaily(start,end){
   const metaByDate={};
-  for(const r of S.metaRows){
-    if(campaignStage(r.campName)!=="Carrinho")continue;
+  for(const r of (S.carrinhoMetaRows||[])){
     if(r.date<start||r.date>end)continue;
     if(!metaByDate[r.date])metaByDate[r.date]={spend:0,clicks:0};
     metaByDate[r.date].spend+=r.spend;metaByDate[r.date].clicks+=r.clicks;
   }
-  const fichasByDate={},fichasComPrecoByDate={},fichasTrafByDate={},fichasOrgByDate={};
+  // Fichas de TRÁFEGO alimentam o KPI/custo por ficha (não conta orgânico);
+  // fichas de ORGÂNICO só entram no gráfico separado "Fichas por dia
+  // (orgânico)" — visualização à parte, não afeta nenhum número/KPI.
+  const fichasByDate={},fichasComPrecoByDate={},fichasOrgByDate={};
   for(const f of S.carrinhoFichaOrigem){
     if(f.date<start||f.date>end)continue;
-    fichasByDate[f.date]=(fichasByDate[f.date]||0)+1;
-    if(f.comPreco)fichasComPrecoByDate[f.date]=(fichasComPrecoByDate[f.date]||0)+1;
-    if(f.tipo==="traf")fichasTrafByDate[f.date]=(fichasTrafByDate[f.date]||0)+1;
-    else fichasOrgByDate[f.date]=(fichasOrgByDate[f.date]||0)+1;
+    if(f.tipo==="traf"){
+      fichasByDate[f.date]=(fichasByDate[f.date]||0)+1;
+      if(f.comPreco)fichasComPrecoByDate[f.date]=(fichasComPrecoByDate[f.date]||0)+1;
+    }else{
+      fichasOrgByDate[f.date]=(fichasOrgByDate[f.date]||0)+1;
+    }
   }
-  const dates=new Set([...Object.keys(metaByDate),...Object.keys(fichasByDate)]);
+  const dates=new Set([...Object.keys(metaByDate),...Object.keys(fichasByDate),...Object.keys(fichasOrgByDate)]);
   return[...dates].sort().map(d=>{
     const m=metaByDate[d]||{spend:0,clicks:0};
     const fichas=fichasByDate[d]||0, fichasComPreco=fichasComPrecoByDate[d]||0;
-    const fichasTraf=fichasTrafByDate[d]||0, fichasOrg=fichasOrgByDate[d]||0;
-    return{date:d,label:fDate(d),spend:m.spend,clicks:m.clicks,fichas,fichasComPreco,fichasTraf,fichasOrg,
+    const fichasOrg=fichasOrgByDate[d]||0;
+    return{date:d,label:fDate(d),spend:m.spend,clicks:m.clicks,fichas,fichasComPreco,fichasOrg,
       custoFichaComPreco:fichasComPreco>0?m.spend/fichasComPreco:null};
   });
 }
@@ -5475,7 +5503,7 @@ function renderCarrinhoPrincipal(){
     <div class="hdr" style="margin-bottom:6px">
       <div>
         <div class="hdr-title">Carrinho — Principal</div>
-        <div class="hdr-sub">${per.s&&per.e?`${fDateBR(per.s)} → ${fDateBR(per.e)}`:""} · campanhas "Carrinho" (Base Meta - captação) + fichas (Tráfego/Orgânico/Disparo)</div>
+        <div class="hdr-sub">${per.s&&per.e?`${fDateBR(per.s)} → ${fDateBR(per.e)}`:""} · investimento (Base Meta - carrinho) + fichas de tráfego</div>
       </div>
       <div style="display:flex;align-items:center;gap:16px">${statusLegend()}</div>
     </div>
@@ -5484,12 +5512,11 @@ function renderCarrinhoPrincipal(){
 
     <div class="g4" style="margin-bottom:13px">
       ${kpiCard("Investimento",fBRL(m.spend),"","var(--text-strong)")}
-      ${kpiCard("Cliques",m.clicks.toLocaleString("pt-BR"),"","var(--text-strong)")}
-      ${kpiCard("Fichas totais",m.fichasTotal.toLocaleString("pt-BR"),"","var(--text-strong)")}
-      ${kpiCard("Fichas com preço",m.fichasComPreco.toLocaleString("pt-BR"),"","var(--text-strong)")}
+      ${kpiCard("Fichas totais",m.fichasTotal.toLocaleString("pt-BR"),"tráfego","var(--text-strong)")}
+      ${kpiCard("Fichas com preço",m.fichasComPreco.toLocaleString("pt-BR"),"tráfego","var(--text-strong)")}
+      ${kpiCard("Custo por ficha (total)",m.custoFicha!=null?fBRL(m.custoFicha):"—","sem meta","var(--text-strong)")}
     </div>
     <div class="g2" style="margin-bottom:20px">
-      ${kpiCard("Custo por ficha (total)",m.custoFicha!=null?fBRL(m.custoFicha):"—","","var(--text-strong)")}
       ${kpiCard("Custo por ficha com preço",m.custoFichaComPreco!=null?fBRL(m.custoFichaComPreco):"—",`Meta: ${fBRL(META_CARRINHO_CUSTO_FICHA_COM_PRECO)}`,custoColor,false,m.custoFichaComPreco,META_CARRINHO_CUSTO_FICHA_COM_PRECO,false)}
     </div>
 
@@ -5507,17 +5534,12 @@ function renderCarrinhoPrincipal(){
 
     <div class="cc" style="position:relative;margin-bottom:14px">
       <div class="ch"><span class="ct">Fichas por dia (tráfego)</span></div>
-      <div style="position:relative"><canvas id="c-carrinho-fichas-traf"></canvas><div class="tip" id="t-carrinho-fichas-traf"></div></div>
-    </div>
-
-    <div class="cc" style="position:relative;margin-bottom:14px">
-      <div class="ch"><span class="ct">Fichas por dia (orgânico)</span></div>
-      <div style="position:relative"><canvas id="c-carrinho-fichas-org"></canvas><div class="tip" id="t-carrinho-fichas-org"></div></div>
+      <div style="position:relative"><canvas id="c-carrinho-fichas"></canvas><div class="tip" id="t-carrinho-fichas"></div></div>
     </div>
 
     <div class="cc" style="position:relative;margin-bottom:20px">
-      <div class="ch"><span class="ct">Fichas por dia (total)</span></div>
-      <div style="position:relative"><canvas id="c-carrinho-fichas"></canvas><div class="tip" id="t-carrinho-fichas"></div></div>
+      <div class="ch"><span class="ct">Fichas por dia (orgânico)</span></div>
+      <div style="position:relative"><canvas id="c-carrinho-fichas-org"></canvas><div class="tip" id="t-carrinho-fichas-org"></div></div>
     </div>
 
     ${daily.length===0?`<div class="err">Nenhum dado no período selecionado — o Carrinho ainda não começou ou os dados ainda não chegaram na planilha.</div>`:""}
@@ -5530,21 +5552,16 @@ function renderCarrinhoPrincipal(){
       {name:"Investimento",color:CHART_INV,key:"spend",fmt:fBRL},
       {name:"Custo/ficha c/ preço",color:CHART_CPL,key:"custoFichaComPreco",fmt:fBRL}],64,12);
 
-    const box2t=document.getElementById("c-carrinho-fichas-traf")?.parentElement;
-    if(box2t)drawBarSingle("c-carrinho-fichas-traf",daily,"fichasTraf",CHART_INV,box2t.clientWidth,200);
-    setupTip("c-carrinho-fichas-traf","t-carrinho-fichas-traf",daily,[
-      {name:"Fichas tráfego",color:CHART_INV,key:"fichasTraf",fmt:v=>String(v)}],40,12);
-
-    const box2o=document.getElementById("c-carrinho-fichas-org")?.parentElement;
-    if(box2o)drawBarSingle("c-carrinho-fichas-org",daily,"fichasOrg",CHART_QUIZ,box2o.clientWidth,200);
-    setupTip("c-carrinho-fichas-org","t-carrinho-fichas-org",daily,[
-      {name:"Fichas orgânico",color:CHART_QUIZ,key:"fichasOrg",fmt:v=>String(v)}],40,12);
-
     const box2=document.getElementById("c-carrinho-fichas")?.parentElement;
     if(box2)drawBarSingle("c-carrinho-fichas",daily,"fichas",CHART_LEAD,box2.clientWidth,200);
     setupTip("c-carrinho-fichas","t-carrinho-fichas",daily,[
       {name:"Fichas totais",color:CHART_LEAD,key:"fichas",fmt:v=>String(v)},
       {name:"Fichas com preço",color:CHART_CPL,key:"fichasComPreco",fmt:v=>String(v)}],40,12);
+
+    const box3=document.getElementById("c-carrinho-fichas-org")?.parentElement;
+    if(box3)drawBarSingle("c-carrinho-fichas-org",daily,"fichasOrg",CHART_QUIZ,box3.clientWidth,200);
+    setupTip("c-carrinho-fichas-org","t-carrinho-fichas-org",daily,[
+      {name:"Fichas orgânico",color:CHART_QUIZ,key:"fichasOrg",fmt:v=>String(v)}],40,12);
   });
 }
 
@@ -6431,6 +6448,92 @@ CPC total:\t${m.cpc!=null?fBRL(m.cpc):"—"}\t${metas?metaEmojiGlobal(m.cpc,meta
 Alcance FB:\t${alcance?alcance.toLocaleString("pt-BR"):"—"}\t(manual — API não fornece)
 Frequência FB:\t${freq!=null?freq.toFixed(2).replace(".",","):"—"}\t${metas?(freq!=null?metaEmojiGlobal(freq,metas.frequencia.val,metas.frequencia.higher):"⚪"):""}${metas?` (🎯: ${metas.frequencia.val})`:" (sem meta ainda)"}`;
 }
+// ── Carrinho: Resumo (Resumo diário) ────────────────────────────────────────
+// Investimento vem de S.carrinhoMetaRows (Base Meta - carrinho — sheet
+// própria, ver SHEET_CARRINHO_META_NAME); fichas só de TRÁFEGO (mesma regra
+// da aba Principal — orgânico não entra em nada disso). Meta de custo/ficha
+// com preço: META_CARRINHO_CUSTO_FICHA_COM_PRECO (R$40); custo/ficha total
+// fica SEM meta (pedido explícito do usuário — não confundir com os valores
+// de meta 45/15 de um modelo de outro lançamento usado só como referência de
+// layout).
+function carrinhoResumoMetrics(s,e){
+  const metaRows=(S.carrinhoMetaRows||[]).filter(r=>(s===null||r.date>=s)&&(e===null||r.date<=e));
+  const spend=metaRows.reduce((a,r)=>a+r.spend,0);
+  const clicks=metaRows.reduce((a,r)=>a+r.clicks,0);
+  const impressions=metaRows.reduce((a,r)=>a+r.impressions,0);
+  const fichasTraf=S.carrinhoFichaOrigem.filter(f=>(s===null||f.date>=s)&&(e===null||f.date<=e)&&f.tipo==="traf");
+  const fichasTotal=fichasTraf.length;
+  const fichasComPreco=fichasTraf.filter(f=>f.comPreco).length;
+  return{
+    spend,clicks,impressions,fichasTotal,fichasComPreco,
+    custoFicha:fichasTotal>0?spend/fichasTotal:null,
+    custoFichaComPreco:fichasComPreco>0?spend/fichasComPreco:null,
+    cpc:clicks>0?spend/clicks:0,
+    ctr:impressions>0?(clicks/impressions)*100:0,
+    cpm:impressions>0?(spend/impressions)*1000:0,
+    txConvForm:clicks>0?(fichasTotal/clicks)*100:0,
+  };
+}
+// Mesmo padrão do cplInfo() do resumo de Captação: sem dado ainda = "—" com
+// 🔴 (não ⚪) — a meta não foi atingida por falta de venda/ficha, não é uma
+// métrica "neutra" sem meta.
+function carrinhoCustoInfo(val,meta){
+  if(val==null)return{txt:"—",emoji:"🔴"};
+  return{txt:fBRL(val),emoji:metaEmojiGlobal(val,meta,false)};
+}
+function carrinhoResumoCardHtml(m){
+  const c=carrinhoCustoInfo(m.custoFichaComPreco,META_CARRINHO_CUSTO_FICHA_COM_PRECO);
+  return stageRow("Investimento",fBRL(m.spend),"","")+
+    stageRow("Fichas com preço",m.fichasComPreco.toLocaleString("pt-BR"),"","")+
+    stageRow("Custo/ ficha com preço",c.txt,`meta: ${fBRL(META_CARRINHO_CUSTO_FICHA_COM_PRECO)}`,c.emoji)+
+    `<div style="height:10px"></div>`+
+    stageRow("Fichas totais",m.fichasTotal.toLocaleString("pt-BR"),"","")+
+    stageRow("Custo/ficha total",m.custoFicha!=null?fBRL(m.custoFicha):"—","sem meta","")+
+    `<div style="height:10px"></div>`+
+    stageRow("CPC",fBRL(m.cpc),"","")+
+    stageRow("CTR",fPct(m.ctr),"","")+
+    stageRow("CPM",fBRL(m.cpm),"","")+
+    stageRow("Tx conversão formulário",fPct(m.txConvForm),"","");
+}
+function carrinhoResumoHtml(){
+  const today=todayISO(), yest=yesterdayISO();
+  const tot=carrinhoResumoMetrics(null,null);
+  const ontem=carrinhoResumoMetrics(yest,yest);
+  const hoje=carrinhoResumoMetrics(today,today);
+  return `
+    ${stageResumoCard("📶 Total - Consolidado",carrinhoResumoCardHtml(tot))}
+    ${stageResumoCard(`⬅️ Ontem · ${fDateBR(yest)}`,carrinhoResumoCardHtml(ontem))}
+    ${stageResumoCard(`⬇️ Hoje · ${fDateBR(today)}`,carrinhoResumoCardHtml(hoje))}`;
+}
+function carrinhoResumoTextBlock(label,m,dateLbl){
+  const c=carrinhoCustoInfo(m.custoFichaComPreco,META_CARRINHO_CUSTO_FICHA_COM_PRECO);
+  return `${label}${dateLbl?`\t${dateLbl}`:""}
+
+Investimento:\t${fBRL(m.spend)}
+Fichas com preço:\t${m.fichasComPreco}
+Custo/ ficha com preço:\t${c.txt}\t${c.emoji} (meta: ${fBRL(META_CARRINHO_CUSTO_FICHA_COM_PRECO)})
+
+Fichas totais:\t${m.fichasTotal}
+Custo/ficha total:\t${m.custoFicha!=null?fBRL(m.custoFicha):"—"} (sem meta)
+
+CPC:\t${fBRL(m.cpc)}
+CTR:\t${fPct(m.ctr)}
+CPM:\t${fBRL(m.cpm)}
+Tx conversão formulário:\t${fPct(m.txConvForm)}`;
+}
+function carrinhoResumoText(){
+  const today=todayISO(), yest=yesterdayISO();
+  const tot=carrinhoResumoMetrics(null,null);
+  const ontem=carrinhoResumoMetrics(yest,yest);
+  const hoje=carrinhoResumoMetrics(today,today);
+  return `oro_ago26| ${funilNomeCurto()} | Carrinho
+
+${carrinhoResumoTextBlock("Total - Consolidado",tot,"")}
+---------------------
+${carrinhoResumoTextBlock("Ontem",ontem,fDateBR(yest))}
+---------------------
+${carrinhoResumoTextBlock("Hoje",hoje,fDateBR(today))}`;
+}
 function aulasResumoHtml(){
   return `${aulaResumoHtml(1,AULA01_METAS)}${aulaResumoHtml(2,null)}${aulaResumoHtml(3,null)}`;
 }
@@ -6451,6 +6554,7 @@ function copyStageResumo(scope,btn){
   if(scope==="aquecimento")text=aquecimentoResumoText();
   else if(scope==="lembrete")text=lembreteResumoText();
   else if(scope==="aulas")text=aulasResumoText();
+  else if(scope==="carrinho")text=carrinhoResumoText();
   if(!text||!btn)return;
   navigator.clipboard.writeText(text).then(()=>{
     const orig=btn.innerHTML;btn.innerHTML="✓ Copiado!";btn.style.color="#4ade80";
