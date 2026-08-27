@@ -2310,6 +2310,11 @@ const FUNIS = {
   europa: {
     key:"europa", label:"oro_ago26 - Europa", status:"ativo",
     sheetId:"19zEGS2dlnmstTToTGF4v2qKw4c-WBzAQL2a2rcPw2sk",
+    // Códigos do link do Typeform (coluna "typeform" da Base vendas do
+    // Carrinho, ex.: "ORO-INTER-WdPZdxg3") que identificam uma venda como
+    // deste funil — a mesma aba de vendas pode vir com linhas de outro funil
+    // misturadas, então filtramos pelo código (não só pela aba em si).
+    typeformCodes:["WdPZdxg3","oUaDxLmQ"],
     // Metas do lançamento (Resumo consolidado 02/08/26).
     metaCpl:5.50, // Custo por cadastro AC Tráfego — meta: menor é melhor
     metasResumo:{
@@ -2415,6 +2420,7 @@ const FUNIS = {
   americaNorte: {
     key:"americaNorte", label:"oro_ago26 - América do Norte", status:"ativo",
     sheetId:"1o6MU4nLITdLy7WtllEDF_87Yt5tRy8PSzspXgzE_oZg",
+    typeformCodes:["PDmGoy7L","XVFAU0Xj"],
     // Meta de CPL própria da América do Norte (R$6,00).
     metaCpl:6.00,
     metasResumo:{
@@ -2571,6 +2577,7 @@ let LEMBRETE_BENCHMARK_OUT25 = FUNIS.europa.lembreteBenchmark;
 const CPL_HOURS = ["09:30","10:30","11:30","12:30","13:30","14:30","15:30","16:30","17:30","18:30","19:30"];
 let CPL_BENCHMARK_OUT25 = FUNIS.europa.cplBenchmark;
 let META_CARRINHO_CUSTO_FICHA_COM_PRECO = FUNIS.europa.metaCarrinhoCustoFichaComPreco;
+let TYPEFORM_CODES = FUNIS.europa.typeformCodes;
 let PLANO_DIARIO = FUNIS.europa.planoDiario;
 // Soma do plano (Captação) até hoje — usado na aba Principal pros cartões
 // "planejado até hoje" e "% atingimento da meta".
@@ -2740,7 +2747,7 @@ const S = {
   carrinhoVendaAttrib:[],   // vendas de TRÁFEGO casadas com anúncio/campanha (herdado da ficha): {date,adName,campName}
   carrinhoVendaOrigem:[],   // TODAS as vendas casadas (tráfego+orgânico) com origem/canal: {date,tipo,origem,canal,comPreco}
   carrinhoVendasPorDia:{},  // date → count (usa a própria "Data Correta" da venda, sem ajuste de fuso)
-  carrinhoVendasTotal:0, carrinhoVendasMatched:0, carrinhoVendasUnmatched:0,
+  carrinhoVendasTotal:0, carrinhoVendasMatched:0, carrinhoVendasUnmatched:0, carrinhoVendasForaDoFunil:0,
   startDate:"", endDate:"", activeQuick:"30d",
   principalChannel:"total", // "total" | "trafego" | "organico" — filtro exclusivo da aba Principal
   principalTemp:"todos",    // "todos" | "quente" | "morno" | "frio" — filtro exclusivo da aba Principal
@@ -2784,7 +2791,7 @@ function resetFunilData(){
   S.carrinhoOrganico={}; S.carrinhoOrganicoComPreco={};
   S.carrinhoPrecoKeyFound=true;
   S.carrinhoVendaAttrib=[]; S.carrinhoVendaOrigem=[]; S.carrinhoVendasPorDia={};
-  S.carrinhoVendasTotal=0; S.carrinhoVendasMatched=0; S.carrinhoVendasUnmatched=0;
+  S.carrinhoVendasTotal=0; S.carrinhoVendasMatched=0; S.carrinhoVendasUnmatched=0; S.carrinhoVendasForaDoFunil=0;
   // Seleções/buscas ligadas a nomes de campanha/anúncio não fazem sentido
   // depois de trocar de funil (outra planilha, outros nomes).
   S.selectedCamps=new Set(); S.selectedAds=new Set(); S.campSearch=""; S.adSearch="";
@@ -2814,6 +2821,7 @@ function switchFunil(key){
   LEMBRETE_BENCHMARK_OUT25=f.lembreteBenchmark;
   CPL_BENCHMARK_OUT25=f.cplBenchmark;
   META_CARRINHO_CUSTO_FICHA_COM_PRECO=f.metaCarrinhoCustoFichaComPreco;
+  TYPEFORM_CODES=f.typeformCodes;
   PLANO_DIARIO=f.planoDiario;
   PLANO_AQUECIMENTO=f.planoAquecimento;
   PLANO_AQUECIMENTO_TOTAL=f.planoAquecimentoTotal;
@@ -2855,6 +2863,26 @@ function fPct(n){ return (n||0).toFixed(2).replace(".",",")+"%"; }
 // formatação/país/pontuação) — usado no dedup por contato.
 function normalizePhone(s){ return String(s||"").replace(/\D/g,""); }
 function normalizeEmail(s){ return String(s||"").trim().toLowerCase(); }
+// Busca uma coluna pelo nome, tolerando variação de maiúsc/minúsc e espaços
+// nas pontas do cabeçalho (ex.: "E-mail" vs "e-mail" vs "Email", "Telefone"
+// vs "telefone") — cada fonte/exportação vem com uma capitalização diferente
+// e isso já quebrou o cruzamento ficha↔venda antes (campo achado como
+// undefined por diferença de caixa, então nunca batia telefone/e-mail).
+// Tenta cada nome exato primeiro (rápido, caso comum); só cai pro fallback
+// case-insensitive se nenhum bater.
+function getColCI(row,...names){
+  for(const name of names){
+    const v=row[name];
+    if(v!=null&&v!=="")return v;
+  }
+  const lower={};
+  for(const k in row)lower[k.toLowerCase().trim()]=row[k];
+  for(const name of names){
+    const v=lower[name.toLowerCase().trim()];
+    if(v!=null&&v!=="")return v;
+  }
+  return "";
+}
 // Parser de "DD/MM/YYYY HH:MM:SS" ("Submitted At" das fichas do Carrinho) →
 // epoch ms (sem fuso — o ajuste -3h é aplicado depois, igual às demais datas
 // deste dashboard). Diferente de toISO()/toISOLead(), que tratam só a data.
@@ -3158,8 +3186,8 @@ function processCarrinhoFichas(trafRowsRaw,orgRowsRaw,dispRowsRaw){
     if(ms==null)return;
     const d=msToISO(ms-3*60*60*1000); // mesmo ajuste -3h das demais datas deste dashboard
     const comPreco=precoKey?!!(r[precoKey]||"").trim():null;
-    const phone=normalizePhone(r["Qual seu WhatsApp?"]);
-    const email=normalizeEmail(r["Qual seu E-mail?"]);
+    const phone=normalizePhone(getColCI(r,"Qual seu WhatsApp?"));
+    const email=normalizeEmail(getColCI(r,"Qual seu E-mail?","Qual seu e-mail?"));
     const utmSrc=(r["utm_source"]||"").trim();
     const utmMed=(r["utm_medium"]||"").trim();
     const utmCont=(r["utm_content"]||r["utm_term"]||"").trim();
@@ -3213,12 +3241,22 @@ function processCarrinhoVendas(vendasRowsRaw){
     if(f.email&&(!earliestByEmail[f.email]||f.ms<earliestByEmail[f.email].ms))earliestByEmail[f.email]=f;
   }
   const vendaAttrib=[], vendaOrigem=[], porDia={};
-  let total=0, matched=0, unmatched=0;
+  let total=0, matched=0, unmatched=0, foraDoFunil=0;
   for(const r of vendasRowsRaw){
     const nome=(r["Nome"]||"").trim();
-    const ph=normalizePhone(r["Whatsapp1"]||r["Whatsapp"]||r["Telefone"]);
-    const em=normalizeEmail(r["Email"]);
+    const ph=normalizePhone(getColCI(r,"Whatsapp1","Whatsapp","Telefone"));
+    const em=normalizeEmail(getColCI(r,"Email","E-mail"));
     if(!nome&&!ph&&!em)continue; // linha vazia
+    // Filtro por código do link do Typeform (coluna "typeform", ex.:
+    // "ORO-INTER-WdPZdxg3") — a mesma aba de Base vendas pode vir com linhas
+    // de mais de um funil misturadas; só descarta quando o código VEM
+    // preenchido e não bate com nenhum dos códigos deste funil (linha sem
+    // essa coluna preenchida continua entrando, pra não quebrar dado antigo).
+    const tfRaw=String(getColCI(r,"typeform","Typeform","Código Typeform","Código do Typeform")).trim();
+    if(tfRaw&&!TYPEFORM_CODES.some(code=>tfRaw.includes(code))){
+      foraDoFunil++;
+      continue;
+    }
     total++;
     const ms=parseFichaDateTimeMs(r["Data Correta"]);
     const d=ms!=null?msToISO(ms):null;
@@ -3243,6 +3281,7 @@ function processCarrinhoVendas(vendasRowsRaw){
   S.carrinhoVendaOrigem=vendaOrigem;
   S.carrinhoVendasPorDia=porDia;
   S.carrinhoVendasTotal=total; S.carrinhoVendasMatched=matched; S.carrinhoVendasUnmatched=unmatched;
+  S.carrinhoVendasForaDoFunil=foraDoFunil;
 }
 
 // ── Base GA4 (dados de página) ──────────────────────────────────────────────
@@ -5642,7 +5681,7 @@ function renderCarrinhoFichas(){
     </div>
     <div class="g2" style="margin-bottom:20px">
       ${kpiCard("Fichas duplicadas",fPct(pctDuplicadas),`${duplicadas.toLocaleString("pt-BR")} fichas`,"var(--text-strong)")}
-      ${kpiCard("Vendas não identificadas",S.carrinhoVendasUnmatched.toLocaleString("pt-BR"),"sem telefone/e-mail batendo com nenhuma ficha","var(--text-strong)")}
+      ${kpiCard("Vendas não identificadas",S.carrinhoVendasUnmatched.toLocaleString("pt-BR"),`sem telefone/e-mail batendo com nenhuma ficha${S.carrinhoVendasForaDoFunil?` · ${S.carrinhoVendasForaDoFunil} linha(s) de outro funil ignorada(s) (código do typeform)`:""}`,"var(--text-strong)")}
     </div>
 
     <div class="section-lbl" style="margin-top:0">Origem da ficha (UTM source)</div>
@@ -5754,7 +5793,7 @@ function renderCarrinhoVendas(){
     <div class="g4" style="margin-bottom:20px">
       ${kpiCard("Vendas no período",vendasNoPeriodo.toLocaleString("pt-BR"),"","var(--text-strong)")}
       ${kpiCard("Vendas casadas c/ ficha",vendasCasadas.toLocaleString("pt-BR"),"","var(--text-strong)")}
-      ${kpiCard("Vendas não identificadas",S.carrinhoVendasUnmatched.toLocaleString("pt-BR"),"sem telefone/e-mail batendo com nenhuma ficha","var(--text-strong)")}
+      ${kpiCard("Vendas não identificadas",S.carrinhoVendasUnmatched.toLocaleString("pt-BR"),`sem telefone/e-mail batendo com nenhuma ficha${S.carrinhoVendasForaDoFunil?` · ${S.carrinhoVendasForaDoFunil} linha(s) de outro funil ignorada(s) (código do typeform)`:""}`,"var(--text-strong)")}
       ${kpiCard("Conversão ficha → venda",fPct(conv),"","var(--text-strong)")}
     </div>
 
