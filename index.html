@@ -2748,6 +2748,7 @@ const S = {
   carrinhoVendaOrigem:[],   // TODAS as vendas casadas (tráfego+orgânico) com origem/canal: {date,tipo,origem,canal,comPreco}
   carrinhoVendasPorDia:{},  // date → count (usa a própria "Data Correta" da venda, sem ajuste de fuso)
   carrinhoVendasTotal:0, carrinhoVendasMatched:0, carrinhoVendasUnmatched:0, carrinhoVendasForaDoFunil:0,
+  carrinhoVendasValorPorDia:{}, carrinhoVendasFaturamentoTotal:0,
   startDate:"", endDate:"", activeQuick:"30d",
   principalChannel:"total", // "total" | "trafego" | "organico" — filtro exclusivo da aba Principal
   principalTemp:"todos",    // "todos" | "quente" | "morno" | "frio" — filtro exclusivo da aba Principal
@@ -2792,6 +2793,7 @@ function resetFunilData(){
   S.carrinhoPrecoKeyFound=true;
   S.carrinhoVendaAttrib=[]; S.carrinhoVendaOrigem=[]; S.carrinhoVendasPorDia={};
   S.carrinhoVendasTotal=0; S.carrinhoVendasMatched=0; S.carrinhoVendasUnmatched=0; S.carrinhoVendasForaDoFunil=0;
+  S.carrinhoVendasValorPorDia={}; S.carrinhoVendasFaturamentoTotal=0;
   // Seleções/buscas ligadas a nomes de campanha/anúncio não fazem sentido
   // depois de trocar de funil (outra planilha, outros nomes).
   S.selectedCamps=new Set(); S.selectedAds=new Set(); S.campSearch=""; S.adSearch="";
@@ -3099,6 +3101,13 @@ function stageSpendForDate(stage,date){
 function totalSpendForStage(stage){
   return stageRowsForStage(stage).reduce((a,r)=>a+r.spend,0);
 }
+// Investimento em tráfego pago somando TODAS as etapas do lançamento inteiro
+// (Captação+Aquecimento+Lembrete+Aulas+Carrinho, todo o período, não só o
+// filtro de data selecionado) — usado no ROAS da aba Carrinho→Vendas, que
+// precisa do investimento total do lançamento, não só do Carrinho.
+function investimentoTrafegoTotalGeral(){
+  return ["Captação","Aquecimento","Lembrete","Aulas","Carrinho"].reduce((a,st)=>a+totalSpendForStage(st),0);
+}
 
 // Mesma lógica do metaEmoji() usado no Resumo diário (🟢/🟡/🔴/⚪), só que
 // acessível globalmente pras novas abas de etapa (Aquecimento/Lembrete/Aulas).
@@ -3240,8 +3249,8 @@ function processCarrinhoVendas(vendasRowsRaw){
     if(f.phone&&(!earliestByPhone[f.phone]||f.ms<earliestByPhone[f.phone].ms))earliestByPhone[f.phone]=f;
     if(f.email&&(!earliestByEmail[f.email]||f.ms<earliestByEmail[f.email].ms))earliestByEmail[f.email]=f;
   }
-  const vendaAttrib=[], vendaOrigem=[], porDia={};
-  let total=0, matched=0, unmatched=0, foraDoFunil=0;
+  const vendaAttrib=[], vendaOrigem=[], porDia={}, valorPorDia={};
+  let total=0, matched=0, unmatched=0, foraDoFunil=0, faturamentoTotal=0;
   for(const r of vendasRowsRaw){
     const nome=(r["Nome"]||"").trim();
     const ph=normalizePhone(getColCI(r,"Whatsapp1","Whatsapp","Telefone"));
@@ -3258,9 +3267,13 @@ function processCarrinhoVendas(vendasRowsRaw){
       continue;
     }
     total++;
+    // "valor" (BRL) — mesmo parser usado no investimento manual do Resumo
+    // diário (aceita "2480", "2.480,00", "R$ 2.480,00" etc).
+    const valor=parseFloat(String(getColCI(r,"valor","Valor","Valor da venda")||"").replace(/[R$\s.]/g,"").replace(",","."))||0;
+    faturamentoTotal+=valor;
     const ms=parseFichaDateTimeMs(r["Data Correta"]);
     const d=ms!=null?msToISO(ms):null;
-    if(d)porDia[d]=(porDia[d]||0)+1;
+    if(d){porDia[d]=(porDia[d]||0)+1; valorPorDia[d]=(valorPorDia[d]||0)+valor;}
     const candidates=[];
     if(ph&&earliestByPhone[ph])candidates.push(earliestByPhone[ph]);
     if(em&&earliestByEmail[em])candidates.push(earliestByEmail[em]);
@@ -3270,9 +3283,9 @@ function processCarrinhoVendas(vendasRowsRaw){
       matched++;
       const vd=d||best.date; // fallback pra data da ficha se "Data Correta" vier vazia/quebrada
       if(best.tipo==="traf"){
-        vendaAttrib.push({date:vd,adName:best.adName||"(sem atribuição)",campName:best.campName||"(sem atribuição)"});
+        vendaAttrib.push({date:vd,adName:best.adName||"(sem atribuição)",campName:best.campName||"(sem atribuição)",valor});
       }
-      vendaOrigem.push({date:vd,tipo:best.tipo,origem:best.origem,canal:best.canal,comPreco:best.comPreco});
+      vendaOrigem.push({date:vd,tipo:best.tipo,origem:best.origem,canal:best.canal,comPreco:best.comPreco,valor});
     }else{
       unmatched++;
     }
@@ -3280,6 +3293,8 @@ function processCarrinhoVendas(vendasRowsRaw){
   S.carrinhoVendaAttrib=vendaAttrib;
   S.carrinhoVendaOrigem=vendaOrigem;
   S.carrinhoVendasPorDia=porDia;
+  S.carrinhoVendasValorPorDia=valorPorDia;
+  S.carrinhoVendasFaturamentoTotal=faturamentoTotal;
   S.carrinhoVendasTotal=total; S.carrinhoVendasMatched=matched; S.carrinhoVendasUnmatched=unmatched;
   S.carrinhoVendasForaDoFunil=foraDoFunil;
 }
@@ -5779,6 +5794,15 @@ function renderCarrinhoVendas(){
   const daily=getCarrinhoVendasDaily(start,end);
   const origemRows=getCarrinhoVendaOrigemRows(start,end);
 
+  // Faturamento no período (soma de "valor" das vendas com data dentro do
+  // filtro) e faturamento/ROAS do lançamento inteiro (todas as vendas, sem
+  // filtro de data — ROAS usa o investimento em tráfego de TODAS as etapas:
+  // Captação+Aquecimento+Lembrete+Aulas+Carrinho, não só o do Carrinho).
+  const faturamentoPeriodo=Object.entries(S.carrinhoVendasValorPorDia).filter(([d])=>d>=start&&d<=end).reduce((a,[,v])=>a+v,0);
+  const faturamentoTotal=S.carrinhoVendasFaturamentoTotal;
+  const investTotalLancamento=investimentoTrafegoTotalGeral();
+  const roas=investTotalLancamento>0?faturamentoTotal/investTotalLancamento:null;
+
   el.innerHTML=`
     <div class="hdr" style="margin-bottom:6px">
       <div>
@@ -5788,13 +5812,19 @@ function renderCarrinhoVendas(){
     </div>
     ${S.error?`<div class="err">⚠️ ${S.error}</div>`:""}
     ${S.carrinhoVendasTotal===0?`<div class="err" style="border-color:rgba(251,191,36,.3);background:rgba(251,191,36,.06);color:#fbbf24">⚠️ Nenhuma venda encontrada na aba "Base vendas" ainda.</div>`:""}
-    <div style="font-size:10px;color:var(--hint);margin-bottom:14px">"Base vendas" não tem o valor de cada venda — por isso não há faturamento/ROAS aqui, só volume e conversão de ficha em venda.</div>
 
     <div class="g4" style="margin-bottom:20px">
       ${kpiCard("Vendas no período",vendasNoPeriodo.toLocaleString("pt-BR"),"","var(--text-strong)")}
       ${kpiCard("Vendas casadas c/ ficha",vendasCasadas.toLocaleString("pt-BR"),"","var(--text-strong)")}
       ${kpiCard("Vendas não identificadas",S.carrinhoVendasUnmatched.toLocaleString("pt-BR"),`sem telefone/e-mail batendo com nenhuma ficha${S.carrinhoVendasForaDoFunil?` · ${S.carrinhoVendasForaDoFunil} linha(s) de outro funil ignorada(s) (código do typeform)`:""}`,"var(--text-strong)")}
       ${kpiCard("Conversão ficha → venda",fPct(conv),"","var(--text-strong)")}
+    </div>
+
+    <div class="g4" style="margin-bottom:20px">
+      ${kpiCard("Faturamento no período",fBRL(faturamentoPeriodo),"soma do valor das vendas (coluna \"valor\")","var(--text-strong)")}
+      ${kpiCard("Faturamento do lançamento",fBRL(faturamentoTotal),"todas as vendas, sem filtro de data","var(--text-strong)")}
+      ${kpiCard("Investimento em tráfego (lançamento)",fBRL(investTotalLancamento),"Captação+Aquecimento+Lembrete+Aulas+Carrinho, tudo","var(--text-strong)")}
+      ${kpiCard("ROAS do lançamento",roas!=null?roas.toFixed(2).replace(".",",")+"x":"—","faturamento do lançamento / investimento em tráfego (tudo)","var(--text-strong)")}
     </div>
 
     <div class="cc" style="position:relative;margin-bottom:20px">
