@@ -2994,21 +2994,44 @@ function statusBorder(val,meta,higherIsBetter){
 }
 
 // ── CSV parser ────────────────────────────────────────────────────────────
+// Percorre o texto INTEIRO caractere a caractere (não faz split por linha
+// antes de parsear) — precisa ser assim pra lidar com campo entre aspas que
+// contém quebra de linha literal (comum em resposta de texto livre do
+// typeform, tipo "Por que você acha que não conseguiu esse objetivo ainda
+// na sua vida?"). A versão antiga dava split(/\r?\n/) ANTES de saber se
+// estava dentro de aspas — qualquer resposta de texto livre com quebra de
+// linha rasgava 1 linha real do CSV em várias linhas fantasma, inflando a
+// contagem de fichas/leads e corrompendo o alinhamento de colunas dali pra
+// frente (bug silencioso, sem erro nenhum — só número errado).
 function parseCSVText(text){
-  const lines=text.split(/\r?\n/);
   const result=[];
-  for(const line of lines){
-    if(!line.trim()) continue;
-    const row=[];let cur="";let inQ=false;
-    for(let i=0;i<line.length;i++){
-      const c=line[i];
-      if(c==='"'){if(inQ&&line[i+1]==='"'){cur+='"';i++;}else inQ=!inQ;}
-      else if(c===','&&!inQ){row.push(cur);cur="";}
+  let row=[],cur="",inQ=false;
+  const pushRow=()=>{
+    row.push(cur);
+    // pula linha totalmente vazia (mesmo comportamento de antes: linha só
+    // com espaço/nada não vira registro) — mas mantém linha com pelo menos
+    // 1 campo com conteúdo real, mesmo que os outros venham vazios.
+    if(row.some(f=>f.trim()!==""))result.push(row);
+    row=[];cur="";
+  };
+  for(let i=0;i<text.length;i++){
+    const c=text[i];
+    if(inQ){
+      if(c==='"'){
+        if(text[i+1]==='"'){cur+='"';i++;}
+        else inQ=false;
+      }else{
+        cur+=c;
+      }
+    }else{
+      if(c==='"')inQ=true;
+      else if(c===','){row.push(cur);cur="";}
+      else if(c==='\r'){/* ignora — \n cuida da quebra de linha */}
+      else if(c==='\n'){pushRow();}
       else cur+=c;
     }
-    row.push(cur);
-    result.push(row);
   }
+  if(cur!==""||row.length)pushRow();
   return result;
 }
 function parseRows(rows){
@@ -3186,6 +3209,51 @@ function dedupByContact(items){
   return Object.values(groups);
 }
 function dedupFichasByContact(fichas){ return dedupByContact(fichas); }
+// Reenvio de typeform: a mesma pessoa (telefone OU e-mail) às vezes preenche
+// a ficha 2+ vezes — uma tentativa "incompleta" sem escolher a forma de
+// pagamento (Submitted At costuma vir zerado, tipo "01/01/0001 00:00:00") e
+// outra já com a forma de pagamento escolhida. Sem isso, a mesma pessoa
+// contava 2x em "Fichas totais" e inflava/distorcia o custo/ficha. Regra:
+// se existe pelo menos uma linha COM preço, fica só a mais recente entre as
+// que têm preço (descarta todas as sem preço do mesmo grupo); se ninguém do
+// grupo tem preço, fica só a mais recente mesmo (a pessoa nunca respondeu
+// essa pergunta). Roda ANTES de processRow, direto nas linhas cruas do CSV —
+// mesma técnica de union-find do dedupByContact, mas aqui quem "ganha" não é
+// sempre a mais antiga.
+function dedupRawFichaRowsPreferComPreco(rowsRaw,precoKey){
+  if(rowsRaw.length<2)return rowsRaw;
+  const parent={};
+  function find(x){ if(!(x in parent))parent[x]=x; while(parent[x]!==x){parent[x]=parent[parent[x]];x=parent[x];} return x; }
+  function union(a,b){ const ra=find(a),rb=find(b); if(ra!==rb)parent[ra]=rb; }
+  const keyed=rowsRaw.map(r=>{
+    const phone=normalizePhone(getColCI(r,"Qual seu WhatsApp?"));
+    const email=normalizeEmail(getColCI(r,"Qual seu E-mail?","Qual seu e-mail?"));
+    const comPreco=precoKey?!!(r[precoKey]||"").trim():false;
+    const ms=parseFichaDateTimeMs(r["Submitted At"]);
+    return{r,phone,email,comPreco,ms:ms==null?-Infinity:ms};
+  });
+  keyed.forEach((it,i)=>{
+    const k="r:"+i; find(k);
+    if(it.phone)union(k,"p:"+it.phone);
+    if(it.email)union(k,"e:"+it.email);
+  });
+  const groups={};
+  keyed.forEach((it,i)=>{
+    const root=find("r:"+i);
+    if(!groups[root])groups[root]=[];
+    groups[root].push(it);
+  });
+  const out=[];
+  for(const root in groups){
+    const items=groups[root];
+    if(items.length===1){out.push(items[0].r);continue;}
+    const priced=items.filter(it=>it.comPreco);
+    const pool=priced.length?priced:items;
+    pool.sort((a,b)=>b.ms-a.ms);
+    out.push(pool[0].r);
+  }
+  return out;
+}
 // Processa as 3 bases já parseadas (linhas cruas) e popula todo o estado
 // S.carrinho* de uma vez. Precisa rodar DEPOIS que S.adIdMap (Base Meta) já
 // foi montado, pra conseguir casar as fichas de tráfego com anúncio/campanha.
@@ -3194,6 +3262,12 @@ function processCarrinhoFichas(trafRowsRaw,orgRowsRaw,dispRowsRaw){
   const precoKeyOrg=orgRowsRaw.length?findPrecoKey(Object.keys(orgRowsRaw[0])):null;
   const precoKeyDisp=dispRowsRaw.length?findPrecoKey(Object.keys(dispRowsRaw[0])):null;
   S.carrinhoPrecoKeyFound=!!(precoKeyTraf||precoKeyOrg||precoKeyDisp);
+
+  // Reenvio de typeform (mesma pessoa, 2+ fichas — ver comentário da função):
+  // 1 ficha só por pessoa dentro de cada base, priorizando quem tem preço.
+  trafRowsRaw=dedupRawFichaRowsPreferComPreco(trafRowsRaw,precoKeyTraf);
+  orgRowsRaw=dedupRawFichaRowsPreferComPreco(orgRowsRaw,precoKeyOrg);
+  dispRowsRaw=dedupRawFichaRowsPreferComPreco(dispRowsRaw,precoKeyDisp);
 
   const trafD={}, trafDComPreco={};
   const orgD={}, orgDComPreco={};
